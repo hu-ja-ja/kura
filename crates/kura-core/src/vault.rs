@@ -192,8 +192,27 @@ impl Vault {
             .collect();
         items.sort_by_cached_key(|item| item.name.to_lowercase());
 
+        // Folders only feed the filter bar, so a failure must not hide the list.
+        let mut folders: Vec<crate::model::Folder> = self
+            .client
+            .vault()
+            .folders()
+            .list()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|folder| {
+                Some(crate::model::Folder {
+                    id: folder.id?.to_string(),
+                    name: folder.name,
+                })
+            })
+            .collect();
+        folders.sort_by_cached_key(|folder| folder.name.to_lowercase());
+
         Ok(VaultSnapshot {
             items,
+            folders,
             decrypt_failures: decrypted.failures.len(),
         })
     }

@@ -9,7 +9,7 @@ mod server;
 mod vault;
 
 pub use error::CoreError;
-pub use model::{ItemKind, VaultItem, VaultSnapshot};
-pub use search::search_indices;
+pub use model::{Folder, ItemKind, VaultItem, VaultSnapshot};
+pub use search::{VaultFilter, filter_indices, search_indices};
 pub use server::client_settings;
 pub use vault::{LoginOutcome, TwoFactorChallenge, TwoFactorMethod, Vault};

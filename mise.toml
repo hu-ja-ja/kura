@@ -13,6 +13,14 @@ run = "cargo run -p kura-app"
 description = "Type-check the workspace"
 run = "cargo check --workspace --all-targets"
 
+[tasks.fmt]
+description = "Format the workspace"
+run = "cargo fmt --all"
+
+[tasks.lint]
+description = "Format check and lints"
+run = "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings"
+
 [tasks.build]
 description = "Release build"
 run = "cargo build --release -p kura-app"

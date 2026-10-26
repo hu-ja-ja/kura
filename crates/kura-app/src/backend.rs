@@ -4,12 +4,24 @@
 //! on the UI thread and the UI never waits for the network.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use kura_core::{
     CoreError, LoginOutcome, TwoFactorChallenge, TwoFactorMethod, Vault, VaultSnapshot,
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::time::{MissedTickBehavior, interval};
 use zeroize::Zeroizing;
+
+/// How often an unlocked vault syncs on its own. Override for development.
+fn sync_interval() -> Duration {
+    let secs = std::env::var("KURA_SYNC_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(15 * 60);
+    Duration::from_secs(secs)
+}
 
 pub enum Command {
     Login {
@@ -73,109 +85,131 @@ struct Session {
 
 async fn worker(mut commands: UnboundedReceiver<Command>, events: UnboundedSender<Event>) {
     let mut session: Option<Session> = None;
+    let mut ticker = interval(sync_interval());
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    // The first tick is immediate; skip it.
+    ticker.tick().await;
 
-    while let Some(command) = commands.recv().await {
-        match command {
-            Command::Login {
-                server_url,
-                email,
-                password,
-            } => {
-                let vault = match Vault::connect(Some(&server_url)) {
-                    Ok(vault) => vault,
-                    Err(err) => {
-                        let _ = events.send(Event::Failed(err));
-                        continue;
-                    }
+    loop {
+        tokio::select! {
+            command = commands.recv() => {
+                let Some(command) = command else {
+                    break;
                 };
-
-                match vault.login(&email, &password).await {
-                    Ok(LoginOutcome::LoggedIn) => {
-                        session = Some(Session {
-                            vault,
-                            email,
-                            password: None,
-                        });
-                        let _ = events.send(Event::LoggedIn);
-                        if let Some(session) = session.as_ref() {
-                            refresh(session, false, &events).await;
-                        }
-                    }
-                    Ok(LoginOutcome::TwoFactorRequired(challenge)) => {
-                        session = Some(Session {
-                            vault,
-                            email,
-                            password: Some(Zeroizing::new(password)),
-                        });
-                        let _ = events.send(Event::TwoFactorRequired(challenge));
-                    }
-                    Err(err) => {
-                        let _ = events.send(Event::Failed(err));
-                    }
-                }
+                handle(command, &mut session, &events).await;
             }
-
-            Command::SubmitTwoFactor { method, code } => {
-                let Some(current) = session.as_mut() else {
-                    let _ = events.send(Event::Failed(CoreError::Internal));
-                    continue;
-                };
-                let Some(password) = current.password.as_ref() else {
-                    let _ = events.send(Event::Failed(CoreError::Internal));
-                    continue;
-                };
-
-                match current
-                    .vault
-                    .submit_two_factor(&current.email, password, &method, &code)
-                    .await
+            _ = ticker.tick() => {
+                if let Some(current) = session.as_ref()
+                    && current.vault.is_unlocked()
                 {
-                    Ok(()) => {
-                        current.password = None;
-                        let _ = events.send(Event::LoggedIn);
-                        refresh(current, false, &events).await;
-                    }
-                    Err(err) => {
-                        let _ = events.send(Event::Failed(err));
-                    }
+                    refresh(current, false, &events).await;
                 }
             }
+        }
+    }
+}
 
-            Command::SendEmailCode => {
-                let Some(current) = session.as_ref() else {
-                    let _ = events.send(Event::Failed(CoreError::Internal));
-                    continue;
-                };
-                let Some(password) = current.password.as_ref() else {
-                    let _ = events.send(Event::Failed(CoreError::Internal));
-                    continue;
-                };
+async fn handle(command: Command, session: &mut Option<Session>, events: &UnboundedSender<Event>) {
+    match command {
+        Command::Login {
+            server_url,
+            email,
+            password,
+        } => {
+            let vault = match Vault::connect(Some(&server_url)) {
+                Ok(vault) => vault,
+                Err(err) => {
+                    let _ = events.send(Event::Failed(err));
+                    return;
+                }
+            };
 
-                match current
-                    .vault
-                    .send_email_code(&current.email, password)
-                    .await
-                {
-                    Ok(()) => {
-                        let _ = events.send(Event::EmailCodeSent);
-                    }
-                    Err(err) => {
-                        let _ = events.send(Event::Failed(err));
+            match vault.login(&email, &password).await {
+                Ok(LoginOutcome::LoggedIn) => {
+                    *session = Some(Session {
+                        vault,
+                        email,
+                        password: None,
+                    });
+                    let _ = events.send(Event::LoggedIn);
+                    if let Some(current) = session.as_ref() {
+                        refresh(current, false, events).await;
                     }
                 }
+                Ok(LoginOutcome::TwoFactorRequired(challenge)) => {
+                    *session = Some(Session {
+                        vault,
+                        email,
+                        password: Some(Zeroizing::new(password)),
+                    });
+                    let _ = events.send(Event::TwoFactorRequired(challenge));
+                }
+                Err(err) => {
+                    let _ = events.send(Event::Failed(err));
+                }
             }
+        }
 
-            Command::Cancel => {
-                session = None;
-            }
+        Command::SubmitTwoFactor { method, code } => {
+            let Some(current) = session.as_mut() else {
+                let _ = events.send(Event::Failed(CoreError::Internal));
+                return;
+            };
+            let Some(password) = current.password.as_ref() else {
+                let _ = events.send(Event::Failed(CoreError::Internal));
+                return;
+            };
 
-            Command::Sync => {
-                let Some(current) = session.as_ref() else {
-                    let _ = events.send(Event::Failed(CoreError::Internal));
-                    continue;
-                };
-                refresh(current, true, &events).await;
+            match current
+                .vault
+                .submit_two_factor(&current.email, password, &method, &code)
+                .await
+            {
+                Ok(()) => {
+                    current.password = None;
+                    let _ = events.send(Event::LoggedIn);
+                    refresh(current, false, events).await;
+                }
+                Err(err) => {
+                    let _ = events.send(Event::Failed(err));
+                }
             }
+        }
+
+        Command::SendEmailCode => {
+            let Some(current) = session.as_ref() else {
+                let _ = events.send(Event::Failed(CoreError::Internal));
+                return;
+            };
+            let Some(password) = current.password.as_ref() else {
+                let _ = events.send(Event::Failed(CoreError::Internal));
+                return;
+            };
+
+            match current
+                .vault
+                .send_email_code(&current.email, password)
+                .await
+            {
+                Ok(()) => {
+                    let _ = events.send(Event::EmailCodeSent);
+                }
+                Err(err) => {
+                    let _ = events.send(Event::Failed(err));
+                }
+            }
+        }
+
+        Command::Cancel => {
+            *session = None;
+        }
+
+        Command::Sync => {
+            let Some(current) = session.as_ref() else {
+                let _ = events.send(Event::Failed(CoreError::Internal));
+                return;
+            };
+            refresh(current, true, events).await;
         }
     }
 }

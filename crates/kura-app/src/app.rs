@@ -11,11 +11,13 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use kura_core::{CoreError, TwoFactorChallenge, TwoFactorMethod, VaultSnapshot};
+use kura_core::{
+    CoreError, ItemKind, TwoFactorChallenge, TwoFactorMethod, VaultFilter, VaultSnapshot,
+};
 use rust_i18n::t;
 
 use crate::backend::{Backend, Command, Event};
-use crate::list::VaultDelegate;
+use crate::list::{VaultDelegate, kind_label};
 use crate::settings::Settings;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -31,6 +33,15 @@ enum Problem {
     Core(CoreError),
 }
 
+const TYPE_FILTERS: &[ItemKind] = &[
+    ItemKind::Login,
+    ItemKind::Card,
+    ItemKind::Identity,
+    ItemKind::SecureNote,
+    ItemKind::SshKey,
+    ItemKind::Other,
+];
+
 pub struct Root {
     backend: Backend,
     settings: Settings,
@@ -40,9 +51,12 @@ pub struct Root {
     server_url: Entity<InputState>,
     email: Entity<InputState>,
     password: Entity<InputState>,
+    search: Entity<InputState>,
     otp: Entity<OtpState>,
     list: Entity<ListState<VaultDelegate>>,
     snapshot: Arc<VaultSnapshot>,
+    filter: VaultFilter,
+    show_server: bool,
     busy: bool,
     problem: Option<Problem>,
     sync_problem: Option<Problem>,
@@ -74,6 +88,7 @@ impl Root {
         }
         let email = cx.new(|cx| InputState::new(window, cx));
         let password = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t!("vault.search")));
         let otp = cx.new(|cx| OtpState::new(6, window, cx));
         let list = cx.new(|cx| {
             ListState::new(
@@ -81,7 +96,6 @@ impl Root {
                 window,
                 cx,
             )
-            .searchable(true)
         });
 
         let mut subscriptions = vec![];
@@ -113,6 +127,18 @@ impl Root {
                 }
             },
         ));
+        subscriptions.push(cx.subscribe_in(
+            &search,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let query = this.search.read(cx).value().to_string();
+                    this.list.update(cx, |list, cx| {
+                        list.set_query(&query, window, cx);
+                    });
+                }
+            },
+        ));
         subscriptions.push(
             cx.subscribe_in(&otp, window, |this, _, event: &OtpEvent, _, cx| {
                 if matches!(event, OtpEvent::Complete) {
@@ -124,16 +150,41 @@ impl Root {
         subscriptions.push(
             cx.observe_keystrokes(|this, event: &KeystrokeEvent, window, cx| {
                 let keystroke = &event.keystroke;
+
                 if keystroke.key == "f" && keystroke.modifiers.control {
                     // Swallow the key so the letter does not land in the search field.
                     cx.stop_propagation();
                     this.focus_search(window, cx);
+                    return;
+                }
+
+                if this.page != Page::Vault {
+                    return;
+                }
+                if !this.search.read(cx).focus_handle(cx).is_focused(window) {
+                    return;
+                }
+
+                match keystroke.key.as_str() {
+                    "down" => {
+                        cx.stop_propagation();
+                        this.list.update(cx, |list, cx| list.focus(window, cx));
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        if this.search.read(cx).value().is_empty() {
+                            this.list.update(cx, |list, cx| list.focus(window, cx));
+                        } else {
+                            this.search
+                                .update(cx, |search, cx| search.set_value("", window, cx));
+                        }
+                    }
+                    _ => {}
                 }
             }),
         );
 
         // The worker answers on its own task. Bring every answer to the UI thread.
-
         let this = cx.entity();
         cx.spawn(async move |_this, cx| {
             let mut events = events;
@@ -142,6 +193,13 @@ impl Root {
             }
         })
         .detach();
+
+        // Put the cursor in the first field once the window has drawn.
+        cx.defer_in(window, |this, window, cx| {
+            this.email.update(cx, |input, cx| {
+                input.focus_handle(cx).focus(window, cx);
+            });
+        });
 
         Self {
             backend,
@@ -152,9 +210,12 @@ impl Root {
             server_url,
             email,
             password,
+            search,
             otp,
             list,
             snapshot: Arc::new(VaultSnapshot::default()),
+            filter: VaultFilter::All,
+            show_server: false,
             busy: false,
             problem: None,
             sync_problem: None,
@@ -173,6 +234,7 @@ impl Root {
                 self.busy = false;
                 self.page = Page::Vault;
                 self.problem = None;
+                self.sync_problem = None;
                 self.challenge = None;
                 self.method = None;
                 self.clear_password(cx);
@@ -191,10 +253,32 @@ impl Root {
                 self.problem = None;
                 self.email_code_sent = false;
                 self.clear_password(cx);
+                let otp = self.otp.clone();
+                self.in_window(cx, move |window, cx| {
+                    otp.update(cx, |state, cx| {
+                        state.focus_handle(cx).focus(window, cx);
+                    });
+                });
             }
             Event::Snapshot(snapshot) => {
                 self.busy = false;
                 self.sync_problem = None;
+
+                // A folder filter whose folder disappeared falls back to all.
+                let folder_gone = match &self.filter {
+                    VaultFilter::Folder(id) => {
+                        !snapshot.folders.iter().any(|folder| &folder.id == id)
+                    }
+                    _ => false,
+                };
+                if folder_gone {
+                    self.filter = VaultFilter::All;
+                    self.list.update(cx, |list, cx| {
+                        list.delegate_mut().set_filter(VaultFilter::All);
+                        cx.notify();
+                    });
+                }
+
                 self.snapshot = snapshot.clone();
                 self.list.update(cx, |list, cx| {
                     list.delegate_mut().set_snapshot(snapshot);
@@ -211,6 +295,10 @@ impl Root {
                 let problem = Problem::Core(err);
                 if self.page == Page::Vault {
                     self.sync_problem = Some(problem);
+                    self.list.update(cx, |list, cx| {
+                        list.delegate_mut().set_loading(false);
+                        cx.notify();
+                    });
                 } else {
                     self.problem = Some(problem);
                     if self.page == Page::TwoFactor {
@@ -294,6 +382,28 @@ impl Root {
         rust_i18n::set_locale(&self.locale);
         self.settings.language = Some(self.locale.clone());
         let _ = self.settings.save();
+
+        let placeholder = t!("vault.search").to_string();
+        let search = self.search.clone();
+        self.in_window(cx, move |window, cx| {
+            search.update(cx, |search, cx| {
+                search.set_placeholder(placeholder, window, cx)
+            });
+        });
+
+        cx.notify();
+    }
+
+    fn set_filter(&mut self, filter: VaultFilter, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter == filter {
+            return;
+        }
+        self.filter = filter.clone();
+        let query = self.search.read(cx).value().to_string();
+        self.list.update(cx, |list, cx| {
+            list.delegate_mut().set_filter(filter);
+            list.set_query(&query, window, cx);
+        });
         cx.notify();
     }
 
@@ -325,8 +435,8 @@ impl Root {
         if self.page != Page::Vault {
             return;
         }
-        self.list.update(cx, |list, cx| {
-            list.focus(window, cx);
+        self.search.update(cx, |search, cx| {
+            search.focus_handle(cx).focus(window, cx);
         });
     }
 
@@ -386,10 +496,12 @@ impl Root {
 
     fn render_login(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
+        let danger = cx.theme().danger;
+
         v_flex().flex_1().items_center().justify_center().child(
             v_flex()
-                .w(px(400.))
-                .gap_4()
+                .w(px(380.))
+                .gap_3()
                 .p_6()
                 .rounded_lg()
                 .border_1()
@@ -398,10 +510,30 @@ impl Root {
                     v_flex()
                         .gap_1()
                         .child(
-                            div()
-                                .text_lg()
-                                .font_weight(FontWeight::BOLD)
-                                .child(t!("login.title")),
+                            h_flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_lg()
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(t!("login.title")),
+                                )
+                                .child(
+                                    Button::new("server-toggle")
+                                        .text()
+                                        .xsmall()
+                                        .icon(if self.show_server {
+                                            IconName::ChevronUp
+                                        } else {
+                                            IconName::ChevronDown
+                                        })
+                                        .label(t!("login.self_hosted"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.show_server = !this.show_server;
+                                            cx.notify();
+                                        })),
+                                ),
                         )
                         .child(
                             div()
@@ -410,11 +542,13 @@ impl Root {
                                 .child(t!("login.subtitle")),
                         ),
                 )
-                .child(field(
-                    t!("login.server_url").to_string(),
-                    Input::new(&self.server_url),
-                    muted,
-                ))
+                .when(self.show_server, |this| {
+                    this.child(field(
+                        t!("login.server_url").to_string(),
+                        Input::new(&self.server_url),
+                        muted,
+                    ))
+                })
                 .child(field(
                     t!("login.email").to_string(),
                     Input::new(&self.email),
@@ -429,8 +563,9 @@ impl Root {
                 ))
                 .child(
                     div()
+                        .min_h(px(20.))
                         .text_sm()
-                        .text_color(cx.theme().danger)
+                        .text_color(danger)
                         .child(problem_text(self.problem.as_ref())),
                 )
                 .child(
@@ -462,7 +597,7 @@ impl Root {
 
         v_flex().flex_1().items_center().justify_center().child(
             v_flex()
-                .w(px(400.))
+                .w(px(380.))
                 .gap_4()
                 .p_6()
                 .rounded_lg()
@@ -555,6 +690,7 @@ impl Root {
                 )
                 .child(
                     div()
+                        .min_h(px(20.))
                         .text_sm()
                         .text_color(cx.theme().danger)
                         .child(problem_text(self.problem.as_ref())),
@@ -579,10 +715,96 @@ impl Root {
         )
     }
 
+    fn render_search(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .items_center()
+            .gap_3()
+            .px_4()
+            .py_2()
+            .child(
+                Input::new(&self.search)
+                    .prefix(Icon::new(IconName::Search))
+                    .cleanable(true)
+                    .flex_1(),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Ctrl+F"),
+            )
+    }
+
+    fn render_filters(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let filter = self.filter.clone();
+        let folders = self.snapshot.folders.clone();
+
+        let mut type_chips = Vec::new();
+        for kind in TYPE_FILTERS {
+            let kind = *kind;
+            type_chips.push(filter_button(
+                kind_id(kind),
+                kind_label(kind),
+                None,
+                filter == VaultFilter::Kind(kind),
+                VaultFilter::Kind(kind),
+                cx,
+            ));
+        }
+
+        let mut folder_chips = Vec::new();
+        for folder in folders {
+            let active = filter == VaultFilter::Folder(folder.id.clone());
+            folder_chips.push(filter_button(
+                SharedString::from(format!("folder-{}", folder.id)),
+                folder.name,
+                Some(IconName::Folder),
+                active,
+                VaultFilter::Folder(folder.id),
+                cx,
+            ));
+        }
+
+        h_flex()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .px_4()
+            .py_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(filter_button(
+                "filter-all",
+                t!("filter.all").to_string(),
+                None,
+                filter == VaultFilter::All,
+                VaultFilter::All,
+                cx,
+            ))
+            .child(filter_button(
+                "filter-favorites",
+                t!("filter.favorites").to_string(),
+                Some(IconName::Star),
+                filter == VaultFilter::Favorites,
+                VaultFilter::Favorites,
+                cx,
+            ))
+            .child(divider(cx))
+            .children(type_chips)
+            .when(!folder_chips.is_empty(), |this| {
+                this.child(divider(cx)).children(folder_chips)
+            })
+    }
+
     fn render_vault(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let failures = self.snapshot.decrypt_failures;
+        let has_sync_error = self.sync_problem.is_some();
+        let sync_error = problem_text(self.sync_problem.as_ref());
+
         v_flex()
             .flex_1()
+            .child(self.render_search(cx))
+            .child(self.render_filters(cx))
             .when(failures > 0, |this| {
                 this.child(
                     div()
@@ -593,19 +815,32 @@ impl Root {
                         .child(t!("vault.decrypt_failures", count = failures)),
                 )
             })
-            .child(
-                div()
-                    .px_4()
-                    .py_2()
-                    .text_sm()
-                    .text_color(cx.theme().danger)
-                    .child(problem_text(self.sync_problem.as_ref())),
-            )
-            .child(
-                List::new(&self.list)
-                    .search_placeholder(t!("vault.search"))
-                    .flex_1(),
-            )
+            .when(has_sync_error, |this| {
+                this.child(
+                    h_flex()
+                        .items_center()
+                        .gap_3()
+                        .px_4()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_sm()
+                                .text_color(cx.theme().danger)
+                                .child(sync_error),
+                        )
+                        .child(
+                            Button::new("retry-sync")
+                                .secondary()
+                                .compact()
+                                .label(t!("common.retry"))
+                                .on_click(cx.listener(|this, _, _, _| this.sync())),
+                        ),
+                )
+            })
+            .child(List::new(&self.list).flex_1())
     }
 }
 
@@ -621,6 +856,7 @@ impl Render for Root {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .font_family("IBM Plex Sans JP")
             .child(self.render_header(cx))
             .child(page)
     }
@@ -631,6 +867,42 @@ fn field(label: String, input: impl IntoElement, muted: Hsla) -> impl IntoElemen
         .gap_1()
         .child(div().text_sm().text_color(muted).child(label))
         .child(input)
+}
+
+fn filter_button(
+    id: impl Into<ElementId>,
+    label: String,
+    icon: Option<IconName>,
+    active: bool,
+    filter: VaultFilter,
+    cx: &mut Context<Root>,
+) -> Button {
+    let mut button = Button::new(id)
+        .ghost()
+        .compact()
+        .selected(active)
+        .label(label);
+    if let Some(icon) = icon {
+        button = button.icon(icon);
+    }
+    button.on_click(cx.listener(move |this, _, window, cx| {
+        this.set_filter(filter.clone(), window, cx);
+    }))
+}
+
+fn divider(cx: &Context<Root>) -> impl IntoElement {
+    div().w(px(1.)).h(px(16.)).bg(cx.theme().border)
+}
+
+fn kind_id(kind: ItemKind) -> &'static str {
+    match kind {
+        ItemKind::Login => "type-login",
+        ItemKind::Card => "type-card",
+        ItemKind::Identity => "type-identity",
+        ItemKind::SecureNote => "type-note",
+        ItemKind::SshKey => "type-ssh",
+        ItemKind::Other => "type-other",
+    }
 }
 
 fn problem_text(problem: Option<&Problem>) -> String {

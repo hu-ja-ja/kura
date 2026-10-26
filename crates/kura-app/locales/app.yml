@@ -4,6 +4,17 @@ common:
   back:
     en: "Back"
     ja: "戻る"
+  retry:
+    en: "Retry"
+    ja: "再試行"
+
+filter:
+  all:
+    en: "All"
+    ja: "すべて"
+  favorites:
+    en: "Favorites"
+    ja: "お気に入り"
 
 login:
   title:
@@ -15,6 +26,9 @@ login:
   server_url:
     en: "Server URL (optional)"
     ja: "サーバーURL（省略可）"
+  self_hosted:
+    en: "Self-hosted"
+    ja: "セルフホスト"
   email:
     en: "Email"
     ja: "メールアドレス"
@@ -54,8 +68,8 @@ two_factor:
 
 vault:
   search:
-    en: "Search vault"
-    ja: "保管庫を検索"
+    en: "Search name, username or URL"
+    ja: "名前・ユーザー名・URLで検索"
   sync:
     en: "Sync"
     ja: "同期"
@@ -65,9 +79,15 @@ vault:
   empty:
     en: "This vault is empty."
     ja: "保管庫は空です。"
+  empty_hint:
+    en: "Sync to fetch your items."
+    ja: "同期して項目を取得してください。"
   no_results:
-    en: "Nothing matches the search."
-    ja: "該当する項目がありません。"
+    en: "Nothing matches."
+    ja: "条件に合う項目がありません。"
+  no_results_hint:
+    en: "Change the search or the filter."
+    ja: "検索語か絞り込みを変えてください。"
   decrypt_failures:
     en: "%{count} items could not be read."
     ja: "%{count} 件を読み取れませんでした。"

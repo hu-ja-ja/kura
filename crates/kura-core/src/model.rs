@@ -41,6 +41,7 @@ pub struct VaultItem {
     pub uris: Vec<String>,
     pub kind: ItemKind,
     pub favorite: bool,
+    pub folder_id: Option<String>,
 }
 
 impl From<CipherView> for VaultItem {
@@ -71,14 +72,23 @@ impl From<CipherView> for VaultItem {
             uris,
             kind: ItemKind::from(view.r#type),
             favorite: view.favorite,
+            folder_id: view.folder_id.map(|id| id.to_string()),
         }
     }
+}
+
+/// A folder shown in the filter bar.
+#[derive(Clone)]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
 }
 
 /// The whole list, as of the last sync.
 #[derive(Clone, Default)]
 pub struct VaultSnapshot {
     pub items: Vec<VaultItem>,
+    pub folders: Vec<Folder>,
     /// Items the SDK could not decrypt. They are not shown.
     pub decrypt_failures: usize,
 }

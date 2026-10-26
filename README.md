@@ -13,10 +13,16 @@ destroyed while sitting in the tray).
 ## Status
 
 Milestone M1: sign in with the master password and a TOTP or email code, sync,
-and a searchable read-only list. The UI speaks Japanese and English.
+and a searchable read-only list with type, folder and favourite filters plus a
+15-minute background sync. The UI speaks Japanese and English.
 
 Details, copy, TOTP display, locking, editing, the tray and the settings screen
 are not in yet.
+
+## Fonts
+
+The UI uses IBM Plex Sans JP (Regular and SemiBold), bundled under the SIL Open
+Font License 1.1. The license text is in `crates/kura-app/assets/fonts/license.txt`.
 
 ## Build
 

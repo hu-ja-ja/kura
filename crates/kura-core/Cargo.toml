@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 async-trait = "0.1"
 bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "aa47ad31ef98a1adff7e26cd8f96643be8322423" }

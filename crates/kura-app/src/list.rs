@@ -10,7 +10,7 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use kura_core::{ItemKind, VaultItem, VaultSnapshot, search_indices};
+use kura_core::{ItemKind, VaultFilter, VaultItem, VaultSnapshot, filter_indices};
 use rust_i18n::t;
 
 pub struct VaultDelegate {
@@ -18,6 +18,7 @@ pub struct VaultDelegate {
     /// Indices into the snapshot, in the order they are shown.
     visible: Vec<usize>,
     query: String,
+    filter: VaultFilter,
     loading: bool,
 }
 
@@ -28,17 +29,27 @@ impl VaultDelegate {
             snapshot,
             visible,
             query: String::new(),
+            filter: VaultFilter::All,
             loading: false,
         }
     }
 
     pub fn set_snapshot(&mut self, snapshot: Arc<VaultSnapshot>) {
         self.snapshot = snapshot;
-        self.visible = search_indices(&self.snapshot.items, &self.query);
+        self.rebuild();
+    }
+
+    pub fn set_filter(&mut self, filter: VaultFilter) {
+        self.filter = filter;
+        self.rebuild();
     }
 
     pub fn set_loading(&mut self, loading: bool) {
         self.loading = loading;
+    }
+
+    fn rebuild(&mut self) {
+        self.visible = filter_indices(&self.snapshot.items, &self.query, &self.filter);
     }
 }
 
@@ -74,7 +85,7 @@ impl ListDelegate for VaultDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Task<()> {
         self.query = query.to_string();
-        self.visible = search_indices(&self.snapshot.items, &self.query);
+        self.rebuild();
         cx.notify();
         Task::ready(())
     }
@@ -88,28 +99,34 @@ impl ListDelegate for VaultDelegate {
         _window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
-        let message = if self.query.trim().is_empty() {
-            t!("vault.empty")
+        let (message, hint) = if self.snapshot.items.is_empty() {
+            (t!("vault.empty"), t!("vault.empty_hint"))
         } else {
-            t!("vault.no_results")
+            (t!("vault.no_results"), t!("vault.no_results_hint"))
         };
+
         v_flex()
             .size_full()
             .items_center()
             .justify_center()
             .gap_2()
-            .child(Icon::new(IconName::Inbox).text_color(cx.theme().muted_foreground))
+            .child(
+                Icon::new(IconName::Inbox)
+                    .large()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .child(div().text_sm().child(message))
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(message),
+                    .child(hint),
             )
     }
 }
 
 fn row(item: &VaultItem, ix: IndexPath, cx: &mut Context<ListState<VaultDelegate>>) -> ListItem {
-    ListItem::new(ix).h(px(48.)).child(
+    ListItem::new(ix).h(px(44.)).child(
         h_flex()
             .w_full()
             .items_center()
@@ -142,12 +159,16 @@ fn row(item: &VaultItem, ix: IndexPath, cx: &mut Context<ListState<VaultDelegate
                     .child(kind_label(item.kind)),
             )
             .when(item.favorite, |this| {
-                this.child(Icon::new(IconName::Star).text_color(cx.theme().warning))
+                this.child(
+                    Icon::new(IconName::StarFill)
+                        .xsmall()
+                        .text_color(cx.theme().warning),
+                )
             }),
     )
 }
 
-fn kind_label(kind: ItemKind) -> String {
+pub(crate) fn kind_label(kind: ItemKind) -> String {
     match kind {
         ItemKind::Login => t!("item_kind.login").to_string(),
         ItemKind::Card => t!("item_kind.card").to_string(),
