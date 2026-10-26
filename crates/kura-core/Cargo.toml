@@ -6,9 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-anyhow = "1"
+async-trait = "0.1"
+bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "aa47ad31ef98a1adff7e26cd8f96643be8322423" }
 bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "aa47ad31ef98a1adff7e26cd8f96643be8322423" }
 bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "aa47ad31ef98a1adff7e26cd8f96643be8322423" }
+bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "aa47ad31ef98a1adff7e26cd8f96643be8322423" }
 bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "aa47ad31ef98a1adff7e26cd8f96643be8322423" }
 bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "aa47ad31ef98a1adff7e26cd8f96643be8322423" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Turns on the operating system proxy for the HTTP clients the SDK builds.
+reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+url = "2"

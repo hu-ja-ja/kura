@@ -1,0 +1,134 @@
+_version: 2
+
+common:
+  back:
+    en: "Back"
+    ja: "戻る"
+
+login:
+  title:
+    en: "Sign in"
+    ja: "ログイン"
+  subtitle:
+    en: "Unlock your vault with your master password."
+    ja: "マスターパスワードで保管庫を開きます。"
+  server_url:
+    en: "Server URL (optional)"
+    ja: "サーバーURL（省略可）"
+  email:
+    en: "Email"
+    ja: "メールアドレス"
+  password:
+    en: "Master password"
+    ja: "マスターパスワード"
+  submit:
+    en: "Sign in"
+    ja: "ログイン"
+
+two_factor:
+  title:
+    en: "Two-step login"
+    ja: "二段階認証"
+  description:
+    en: "Enter the code from your authenticator app."
+    ja: "認証アプリのコードを入力してください。"
+  method:
+    authenticator:
+      en: "Authenticator app"
+      ja: "認証アプリ"
+    email:
+      en: "Email code"
+      ja: "メール"
+  sent_to:
+    en: "The code is sent to %{address}."
+    ja: "コードは %{address} に送信されます。"
+  send_email:
+    en: "Send code by email"
+    ja: "メールでコードを送る"
+  email_sent:
+    en: "The code was sent. Check your inbox."
+    ja: "コードを送信しました。受信箱を確認してください。"
+  verify:
+    en: "Verify"
+    ja: "確認"
+
+vault:
+  search:
+    en: "Search vault"
+    ja: "保管庫を検索"
+  sync:
+    en: "Sync"
+    ja: "同期"
+  item_count:
+    en: "%{count} items"
+    ja: "%{count} 件"
+  empty:
+    en: "This vault is empty."
+    ja: "保管庫は空です。"
+  no_results:
+    en: "Nothing matches the search."
+    ja: "該当する項目がありません。"
+  decrypt_failures:
+    en: "%{count} items could not be read."
+    ja: "%{count} 件を読み取れませんでした。"
+
+item_kind:
+  login:
+    en: "Login"
+    ja: "ログイン"
+  card:
+    en: "Card"
+    ja: "カード"
+  identity:
+    en: "Identity"
+    ja: "身元情報"
+  secure_note:
+    en: "Note"
+    ja: "セキュアノート"
+  ssh_key:
+    en: "SSH key"
+    ja: "SSHキー"
+  other:
+    en: "Other"
+    ja: "その他"
+
+error:
+  missing_input:
+    en: "Enter your email and master password."
+    ja: "メールアドレスとマスターパスワードを入力してください。"
+  invalid_credentials:
+    en: "The email or the master password is wrong."
+    ja: "メールアドレスかマスターパスワードが違います。"
+  two_factor_failed:
+    en: "That code was not accepted."
+    ja: "コードが正しくありません。"
+  two_factor_unsupported:
+    en: "This account needs a two-step method Kura does not support."
+    ja: "このアカウントはKuraが対応していない二段階認証方式を使っています。"
+  rejected:
+    en: "Refused by the server"
+    ja: "サーバーに拒否されました"
+  key_not_loaded:
+    en: "Signed in, but the vault key did not load."
+    ja: "ログインは通りましたが、復号鍵を読み込めませんでした。"
+  network:
+    en: "The server could not be reached."
+    ja: "サーバーに接続できませんでした。"
+  timeout:
+    en: "The server did not answer in time."
+    ja: "サーバーの応答がありませんでした。"
+  invalid_response:
+    en: "The server sent an answer Kura cannot read."
+    ja: "サーバーの応答を解釈できませんでした。"
+  server:
+    en: "The server refused the request"
+    ja: "サーバーが要求を拒否しました"
+  invalid_url:
+    en: "That server URL cannot be used."
+    ja: "そのサーバーURLは使用できません。"
+  insecure_url:
+    en: "Only https:// server URLs are allowed."
+    ja: "https:// のサーバーURLだけを指定できます。"
+  internal:
+    en: "Something went wrong."
+    ja: "問題が発生しました。"
