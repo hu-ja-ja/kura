@@ -251,7 +251,7 @@ fn row(
         .when(item.favorite, |this| {
             this.child(
                 Icon::new(IconName::StarFill)
-                    .xsmall()
+                    .with_size(gpui_kit::component::Size::Medium)
                     .text_color(cx.theme().warning),
             )
         });

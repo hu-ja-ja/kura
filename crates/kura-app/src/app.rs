@@ -201,6 +201,8 @@ impl Root {
                     this.list.update(cx, |list, cx| {
                         list.set_query(&query, window, cx);
                     });
+                    // The clear button appears and disappears with the query.
+                    cx.notify();
                 }
                 InputEvent::PressEnter { .. } => {
                     let selected = this.list.read(cx).delegate().selected_item_id();
@@ -938,7 +940,7 @@ impl Root {
                                 .child(
                                     Button::new("server-toggle")
                                         .text()
-                                        .xsmall()
+                                        .small()
                                         .icon(if self.show_server {
                                             IconName::ChevronUp
                                         } else {
@@ -972,9 +974,31 @@ impl Root {
                 ))
                 .child(field(
                     t!("login.password").to_string(),
-                    Input::new(&self.password)
-                        .mask_toggle()
-                        .content_type(InputContentType::Password),
+                    {
+                        // The toggle gpui-component draws is fixed at 12px, so the app
+                        // draws its own at the same size as its other icon buttons.
+                        let masked = self.password.read(cx).presentation().is_masked();
+                        let (icon, label) = if masked {
+                            (IconName::Eye, t!("login.show_password"))
+                        } else {
+                            (IconName::EyeOff, t!("login.hide_password"))
+                        };
+                        Input::new(&self.password)
+                            .content_type(InputContentType::Password)
+                            .suffix(
+                                Button::new("toggle-mask")
+                                    .ghost()
+                                    .icon(icon)
+                                    .tooltip(label.clone())
+                                    .accessibility_label(label)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.password.update(cx, |state, cx| {
+                                            state.toggle_masked(window, cx);
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                    },
                     muted,
                 ))
                 .child(
@@ -1132,6 +1156,7 @@ impl Root {
     }
 
     fn render_search(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_query = !self.search.read(cx).value().is_empty();
         h_flex()
             .items_center()
             .gap_3()
@@ -1139,8 +1164,22 @@ impl Root {
             .py_2()
             .child(
                 Input::new(&self.search)
-                    .prefix(Icon::new(IconName::Search))
-                    .cleanable(true)
+                    .prefix(Icon::new(IconName::Search).small())
+                    .when(has_query, |this| {
+                        this.suffix(
+                            Button::new("clear-search")
+                                .ghost()
+                                .icon(AssetIcon::X)
+                                .tooltip(t!("vault.clear_search"))
+                                .accessibility_label(t!("vault.clear_search"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.search.update(cx, |search, cx| {
+                                        search.set_value("", window, cx);
+                                    });
+                                    this.focus_search(window, cx);
+                                })),
+                        )
+                    })
                     .flex_1(),
             )
             .child(
@@ -1401,7 +1440,6 @@ impl Root {
                         .child(
                             Button::new("detail-close")
                                 .ghost()
-                                .xsmall()
                                 .icon(AssetIcon::X)
                                 .tooltip(t!("detail.close"))
                                 .accessibility_label(t!("detail.close"))
@@ -1422,7 +1460,6 @@ impl Root {
 
         let close = Button::new("detail-close")
             .ghost()
-            .xsmall()
             .icon(AssetIcon::X)
             .tooltip(t!("detail.close"))
             .accessibility_label(t!("detail.close"))
@@ -1455,7 +1492,7 @@ impl Root {
                             .when(favorite, |this| {
                                 this.child(
                                     Icon::new(IconName::StarFill)
-                                        .small()
+                                        .with_size(gpui_kit::component::Size::Medium)
                                         .text_color(cx.theme().warning),
                                 )
                             }),
@@ -1537,7 +1574,6 @@ impl Root {
             actions = actions.child(
                 Button::new(SharedString::from(format!("reveal-{ix}")))
                     .ghost()
-                    .xsmall()
                     .icon(icon)
                     .tooltip(tooltip.clone())
                     .accessibility_label(tooltip)
@@ -1554,7 +1590,6 @@ impl Root {
             actions = actions.child(
                 Button::new(SharedString::from(format!("copy-{ix}")))
                     .ghost()
-                    .xsmall()
                     .icon(IconName::Copy)
                     .tooltip(t!("detail.copy"))
                     .accessibility_label(t!("detail.copy"))
@@ -1567,7 +1602,6 @@ impl Root {
             actions = actions.child(
                 Button::new(SharedString::from(format!("open-{ix}")))
                     .ghost()
-                    .xsmall()
                     .icon(IconName::ExternalLink)
                     .tooltip(t!("detail.open"))
                     .accessibility_label(t!("detail.open"))
@@ -1611,8 +1645,13 @@ impl Root {
             )
             .child(
                 h_flex()
-                    .items_start()
                     .gap_2()
+                    // A tall button centres against a single line; wrapped or
+                    // boxed values keep their first line at the top.
+                    .when(row.multiline || row.selectable, |this| this.items_start())
+                    .when(!row.multiline && !row.selectable, |this| {
+                        this.items_center()
+                    })
                     .child(div().flex_1().min_w_0().child(value_element))
                     .child(actions),
             )

@@ -41,6 +41,12 @@ login:
   password:
     en: "Master password"
     ja: "マスターパスワード"
+  show_password:
+    en: "Show password"
+    ja: "パスワードを表示"
+  hide_password:
+    en: "Hide password"
+    ja: "パスワードを隠す"
   submit:
     en: "Sign in"
     ja: "ログイン"
@@ -76,6 +82,9 @@ vault:
   search:
     en: "Search name, username or URL"
     ja: "名前・ユーザー名・URLで検索"
+  clear_search:
+    en: "Clear search"
+    ja: "検索を消す"
   sync:
     en: "Sync"
     ja: "同期"
