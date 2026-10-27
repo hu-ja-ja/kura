@@ -8,6 +8,94 @@ common:
     en: "Retry"
     ja: "再試行"
 
+tray:
+  show:
+    en: "Show Kura"
+    ja: "Kuraを表示"
+  lock:
+    en: "Lock"
+    ja: "ロック"
+  quit:
+    en: "Quit"
+    ja: "終了"
+
+settings:
+  open:
+    en: "Settings"
+    ja: "設定"
+  title:
+    en: "Settings"
+    ja: "設定"
+  server_url:
+    en: "Server URL"
+    ja: "サーバーURL"
+  server_url_hint:
+    en: "Used by the next sign-in. Empty means bitwarden.com."
+    ja: "次回のログインで使います。空なら bitwarden.com です。"
+  auto_lock:
+    en: "Auto-lock"
+    ja: "自動ロック"
+  auto_lock_hint:
+    en: "Lock after this long without input."
+    ja: "無操作がこの時間続いたらロックします。"
+  minutes:
+    en: "%{minutes} min"
+    ja: "%{minutes}分"
+  clipboard:
+    en: "Clear clipboard"
+    ja: "クリップボードを消す"
+  clipboard_hint:
+    en: "Wipe a copied secret after this long."
+    ja: "コピーした秘密情報をこの時間後に消します。"
+  seconds:
+    en: "%{seconds} sec"
+    ja: "%{seconds}秒"
+  theme:
+    en: "Theme"
+    ja: "テーマ"
+  theme_system:
+    en: "System"
+    ja: "システム"
+  theme_light:
+    en: "Light"
+    ja: "ライト"
+  theme_dark:
+    en: "Dark"
+    ja: "ダーク"
+  language:
+    en: "Language"
+    ja: "言語"
+  autostart:
+    en: "Start with Windows"
+    ja: "Windows起動時に自動起動"
+  autostart_hint:
+    en: "Add Kura to the current user's startup entry."
+    ja: "現在のユーザーのスタートアップに登録します。"
+  start_in_tray:
+    en: "Start in the tray"
+    ja: "起動時にトレイへ格納"
+  destroy_on_hide:
+    en: "Free memory while in the tray"
+    ja: "トレイ格納時にメモリを解放"
+  destroy_on_hide_hint:
+    en: "On destroys the window to free memory; the app stays in the tray and reopening takes a moment. Off keeps the window hidden so it reopens faster."
+    ja: "オンはウィンドウを破棄してメモリを減らします。アプリはトレイに残り、再表示には少し時間がかかります。オフはウィンドウを保持して、再表示を速くします。"
+  capture:
+    en: "Screen capture protection"
+    ja: "スクリーンショット保護"
+  capture_hint:
+    en: "Keep the window out of captures and screen sharing."
+    ja: "画面キャプチャと画面共有に写らないようにします。"
+  save_failed:
+    en: "The settings could not be saved."
+    ja: "設定を保存できませんでした。"
+  autostart_failed:
+    en: "The startup entry could not be changed."
+    ja: "自動起動を変更できませんでした。"
+  capture_failed:
+    en: "Screen capture protection could not be changed."
+    ja: "スクリーンショット保護を変更できませんでした。"
+
 filter:
   all:
     en: "All"
@@ -136,8 +224,8 @@ detail:
     en: "Close"
     ja: "閉じる"
   copied:
-    en: "Copied. The clipboard clears in 30 seconds."
-    ja: "コピーしました。30秒後にクリップボードを消去します。"
+    en: "Copied. The clipboard clears in %{seconds} seconds."
+    ja: "コピーしました。%{seconds}秒後にクリップボードを消去します。"
   copy:
     en: "Copy"
     ja: "コピー"

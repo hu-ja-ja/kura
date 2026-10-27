@@ -12,6 +12,9 @@ workspace = true
 clipboard-win = { version = "5", features = ["std"] }
 gpui-kit = "0.8"
 kura-core = { path = "../kura-core" }
+kura-platform = { path = "../kura-platform" }
+log = "0.4"
+raw-window-handle = "0.6"
 rust-i18n = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

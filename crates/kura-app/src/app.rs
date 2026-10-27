@@ -14,6 +14,7 @@ use gpui_kit::component::input::{
 use gpui_kit::component::list::{List, ListState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -23,12 +24,13 @@ use kura_core::{
     VaultSnapshot,
 };
 use rust_i18n::t;
-use zeroize::Zeroizing;
 
 use crate::backend::{Backend, Command, Event};
+use crate::clipboard::Guard as Clipboard;
+use crate::controller;
 use crate::detail::{DetailRow, otp_digits, rows as detail_rows, tick_totp};
 use crate::list::{VaultDelegate, kind_label};
-use crate::settings::Settings;
+use crate::settings::{Settings, ThemeChoice};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -53,7 +55,6 @@ const TYPE_FILTERS: &[ItemKind] = &[
 ];
 
 const MASK: &str = "••••••••••••";
-const CLIPBOARD_CLEAR: Duration = Duration::from_secs(30);
 const NOTICE_TIME: Duration = Duration::from_secs(2);
 const TOTP_RETRY_SECS: u32 = 5;
 
@@ -67,9 +68,18 @@ struct FolderChoice {
     on_click: ClickHandler,
 }
 
+/// One entry in a settings choice row.
+struct SettingsChoice {
+    label: String,
+    active: bool,
+    on_click: ClickHandler,
+}
+
 pub struct Root {
     backend: Backend,
     settings: Settings,
+    platform: kura_platform::Platform,
+    clipboard: Entity<Clipboard>,
     page: Page,
     locale: String,
     window: AnyWindowHandle,
@@ -81,6 +91,8 @@ pub struct Root {
     notes: Entity<TextareaState>,
     list: Entity<ListState<VaultDelegate>>,
     modal_focus: FocusHandle,
+    settings_focus: FocusHandle,
+    settings_open: bool,
     snapshot: Arc<VaultSnapshot>,
     filter: VaultFilter,
     show_server: bool,
@@ -96,8 +108,6 @@ pub struct Root {
     notice: Option<String>,
     notice_error: bool,
     notice_generation: u64,
-    copied: Option<Zeroizing<String>>,
-    clipboard_generation: u64,
     challenge: Option<TwoFactorChallenge>,
     method: Option<TwoFactorMethod>,
     email_code_sent: bool,
@@ -109,16 +119,22 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
         backend: Backend,
-        events: tokio::sync::mpsc::UnboundedReceiver<Event>,
         settings: Settings,
+        clipboard: Entity<Clipboard>,
+        platform: kura_platform::Platform,
         saved_email: Option<String>,
     ) -> Self {
-        let locale = settings
-            .language
-            .clone()
-            .filter(|locale| locale == "ja" || locale == "en")
-            .unwrap_or_else(system_locale);
+        let locale = settings.locale();
         rust_i18n::set_locale(&locale);
+        Theme::change(theme_mode(settings.theme, window), Some(window), cx);
+        if settings.screenshot_protection
+            && let Some(hwnd) = controller::window_hwnd(window)
+            && let Err(err) = kura_platform::set_capture_protection(hwnd, true)
+        {
+            log::warn!("could not turn on capture protection: {err}");
+        }
+        let unlocked = backend.is_unlocked();
+        let show_server = settings.server_url.is_some();
 
         let server_url =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://vault.example.com"));
@@ -142,6 +158,7 @@ impl Root {
             )
         });
         let modal_focus = cx.focus_handle();
+        let settings_focus = cx.focus_handle();
         let root = cx.entity().downgrade();
         list.update(cx, |list, _| {
             list.delegate_mut().set_on_open(move |id, window, cx| {
@@ -230,6 +247,21 @@ impl Root {
             cx.observe_keystrokes(|this, event: &KeystrokeEvent, window, cx| {
                 let keystroke = &event.keystroke;
 
+                // Locking works from every screen, including the settings dialog.
+                if keystroke.key == "l" && keystroke.modifiers.control {
+                    cx.stop_propagation();
+                    this.lock(window, cx);
+                    return;
+                }
+
+                if this.settings_open {
+                    if keystroke.key == "escape" {
+                        cx.stop_propagation();
+                        this.close_settings(cx);
+                    }
+                    return;
+                }
+
                 if keystroke.key == "f" && keystroke.modifiers.control {
                     // Swallow the key so the letter does not land in the search field.
                     cx.stop_propagation();
@@ -265,11 +297,6 @@ impl Root {
                 if this.page != Page::Vault {
                     return;
                 }
-                if keystroke.key == "l" && keystroke.modifiers.control {
-                    cx.stop_propagation();
-                    this.lock(window, cx);
-                    return;
-                }
                 if keystroke.key == "escape" && this.selected_id.is_some() {
                     cx.stop_propagation();
                     this.close_detail(window, cx);
@@ -299,21 +326,41 @@ impl Root {
             }),
         );
 
-        // The worker answers on its own task. Bring every answer to the UI thread.
-        let this = cx.entity();
-        cx.spawn(async move |_this, cx| {
-            let mut events = events;
-            while let Some(event) = events.recv().await {
-                cx.update_entity(&this, |this, cx| this.handle_event(event, cx));
+        // A system theme follows the OS while the window is alive.
+        subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
+            if this.settings.theme == ThemeChoice::System {
+                Theme::change(theme_mode(ThemeChoice::System, window), Some(window), cx);
             }
-        })
-        .detach();
+        }));
+
+        // Closing the window is a trip to the tray, never an exit.
+        let closing = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            if controller::quitting() {
+                return true;
+            }
+            if let Some(root) = closing.upgrade() {
+                root.update(cx, |root, cx| root.close_to_tray(window, cx));
+            }
+            false
+        });
+
+        if unlocked {
+            list.update(cx, |list, cx| {
+                list.delegate_mut().set_loading(true);
+                cx.notify();
+            });
+            backend.send(Command::Sync);
+        }
 
         // Put the cursor in the field the user still has to fill once the window
-        // has drawn: only the password when a login is saved.
+        // has drawn: the search when the vault is already open, otherwise the
+        // password for a saved login, otherwise the email.
         let has_saved = saved_email.is_some();
         cx.defer_in(window, move |this, window, cx| {
-            let input = if has_saved {
+            let input = if unlocked {
+                this.search.clone()
+            } else if has_saved {
                 this.password.clone()
             } else {
                 this.email.clone()
@@ -326,7 +373,9 @@ impl Root {
         Self {
             backend,
             settings,
-            page: Page::Login,
+            platform,
+            clipboard,
+            page: if unlocked { Page::Vault } else { Page::Login },
             locale,
             window: window.window_handle(),
             server_url,
@@ -337,10 +386,12 @@ impl Root {
             notes,
             list,
             modal_focus,
+            settings_focus,
+            settings_open: false,
             snapshot: Arc::new(VaultSnapshot::default()),
             filter: VaultFilter::All,
-            show_server: false,
-            busy: false,
+            show_server,
+            busy: unlocked,
             problem: None,
             sync_problem: None,
             detail: None,
@@ -352,8 +403,6 @@ impl Root {
             notice: None,
             notice_error: false,
             notice_generation: 0,
-            copied: None,
-            clipboard_generation: 0,
             challenge: None,
             method: None,
             email_code_sent: false,
@@ -363,25 +412,30 @@ impl Root {
 
     // ----------------------------------------------------------------- events
 
-    fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    pub(crate) fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
             Event::LoggedIn => {
                 self.busy = false;
                 self.page = Page::Vault;
+                self.settings_open = false;
                 self.problem = None;
                 self.sync_problem = None;
                 self.challenge = None;
                 self.method = None;
                 self.clear_password(None, cx);
                 // The server URL was accepted, so keep it for the next start.
-                let _ = self.settings.save();
+                self.save_settings(cx);
                 self.list.update(cx, |list, cx| {
                     list.delegate_mut().set_loading(true);
                     cx.notify();
                 });
             }
+            Event::Locked => {
+                self.reset_to_login(None, cx);
+            }
             Event::TwoFactorRequired(challenge) => {
                 self.busy = false;
+                self.settings_open = false;
                 self.method = challenge.methods.first().cloned();
                 self.challenge = Some(challenge);
                 self.page = Page::TwoFactor;
@@ -634,8 +688,15 @@ impl Root {
     /// Manual lock. Dropping the session drops the keys; the UI drops the
     /// decrypted data it was holding.
     fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.backend.cancel();
+        self.reset_to_login(Some(window), cx);
+        self.backend.lock();
+    }
+
+    /// Return to the locked login screen. Used by the manual lock and by the
+    /// worker's answer to a tray or automatic lock.
+    fn reset_to_login(&mut self, mut window: Option<&mut Window>, cx: &mut Context<Self>) {
         self.page = Page::Login;
+        self.settings_open = false;
         self.busy = false;
         self.problem = None;
         self.sync_problem = None;
@@ -643,53 +704,47 @@ impl Root {
         self.method = None;
         self.filter = VaultFilter::All;
         self.snapshot = Arc::new(VaultSnapshot::default());
-        self.forget_detail(Some(window), cx);
-        self.clear_clipboard(cx);
-        self.clear_password(Some(window), cx);
-        self.clear_code(Some(window), cx);
+        self.forget_detail(window.as_deref_mut(), cx);
+        self.clipboard
+            .update(cx, |clipboard, cx| clipboard.clear(cx));
+        self.clear_password(window.as_deref_mut(), cx);
+        self.clear_code(window.as_deref_mut(), cx);
 
         let list = self.list.clone();
         let search = self.search.clone();
         let email = self.email.clone();
         let empty = Arc::new(VaultSnapshot::default());
-        list.update(cx, |list, cx| {
-            list.delegate_mut().set_snapshot(empty);
-            list.delegate_mut().set_filter(VaultFilter::All);
-            list.set_query("", window, cx);
-            list.set_selected_index(None, window, cx);
-        });
-        search.update(cx, |search, cx| search.set_value("", window, cx));
-        email.update(cx, |email, cx| {
-            email.focus_handle(cx).focus(window, cx);
+        self.in_window(window, cx, move |window, cx| {
+            list.update(cx, |list, cx| {
+                list.delegate_mut().set_snapshot(empty);
+                list.delegate_mut().set_filter(VaultFilter::All);
+                list.delegate_mut().set_loading(false);
+                list.set_query("", window, cx);
+                list.set_selected_index(None, window, cx);
+            });
+            search.update(cx, |search, cx| search.set_value("", window, cx));
+            email.update(cx, |email, cx| {
+                email.focus_handle(cx).focus(window, cx);
+            });
         });
         cx.notify();
     }
 
-    /// Put a value on the clipboard and wipe it again after a delay, unless
-    /// something else has replaced it by then.
+    /// Put a value on the clipboard and wipe it again after the configured
+    /// delay, unless something else replaces it by then.
     fn copy_value(&mut self, value: String, cx: &mut Context<Self>) {
         if value.is_empty() {
             return;
         }
-        if !crate::clipboard::copy(&value) {
-            cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
-        }
-        self.copied = Some(Zeroizing::new(value));
-        self.clipboard_generation += 1;
-        let clipboard_generation = self.clipboard_generation;
-
-        let this = cx.entity();
-        cx.spawn(async move |_this, cx| {
-            cx.background_executor().timer(CLIPBOARD_CLEAR).await;
-            cx.update_entity(&this, |this, cx| {
-                if this.clipboard_generation == clipboard_generation {
-                    this.clear_clipboard(cx);
-                }
-            });
-        })
-        .detach();
-
-        self.show_notice(t!("detail.copied").to_string(), false, cx);
+        let timeout = self.settings.clipboard_clear();
+        let seconds = self.settings.clipboard_seconds();
+        self.clipboard
+            .update(cx, |clipboard, cx| clipboard.copy(value, timeout, cx));
+        self.show_notice(
+            t!("detail.copied", seconds = seconds).to_string(),
+            false,
+            cx,
+        );
     }
 
     fn show_notice(&mut self, text: String, error: bool, cx: &mut Context<Self>) {
@@ -710,20 +765,6 @@ impl Root {
         })
         .detach();
 
-        cx.notify();
-    }
-
-    fn clear_clipboard(&mut self, cx: &mut Context<Self>) {
-        let Some(copied) = self.copied.take() else {
-            return;
-        };
-        self.clipboard_generation += 1;
-        // shortcut: if the clipboard cannot be read at the deadline, leave it
-        // alone rather than risk wiping something the user copied elsewhere.
-        let current = crate::clipboard::text();
-        if current.as_deref() == Some(copied.as_str()) && !crate::clipboard::clear() {
-            cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
-        }
         cx.notify();
     }
 
@@ -789,21 +830,20 @@ impl Root {
         self.clear_code(Some(window), cx);
     }
 
-    fn toggle_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.locale = if self.locale == "ja" {
-            "en".to_string()
-        } else {
-            "ja".to_string()
-        };
+    fn set_language(&mut self, locale: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.locale == locale {
+            return;
+        }
+        self.locale = locale.clone();
         rust_i18n::set_locale(&self.locale);
-        self.settings.language = Some(self.locale.clone());
-        let _ = self.settings.save();
+        self.settings.language = Some(locale);
+        self.platform.set_labels(controller::labels());
 
         let placeholder = t!("vault.search").to_string();
         self.search.update(cx, |search, cx| {
             search.set_placeholder(placeholder, window, cx)
         });
-
+        self.save_settings(cx);
         cx.notify();
     }
 
@@ -861,6 +901,134 @@ impl Root {
         });
     }
 
+    /// The window was shown from the tray. Fetch a fresh list as well.
+    pub(crate) fn on_shown(&mut self, cx: &mut Context<Self>) {
+        if self.page == Page::Vault {
+            self.sync();
+            cx.notify();
+        }
+    }
+
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_open {
+            return;
+        }
+        self.settings_open = true;
+        let focus = self.settings_focus.clone();
+        window.defer(cx, move |window, cx| focus.focus(window, cx));
+        cx.notify();
+    }
+
+    fn close_settings(&mut self, cx: &mut Context<Self>) {
+        if !self.settings_open {
+            return;
+        }
+        self.settings_open = false;
+        self.commit_server_url(cx);
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    fn commit_server_url(&mut self, cx: &Context<Self>) {
+        let value = self.server_url.read(cx).value().trim().to_string();
+        self.settings.server_url = (!value.is_empty()).then_some(value);
+    }
+
+    fn save_settings(&mut self, cx: &mut Context<Self>) {
+        if let Err(err) = self.settings.save() {
+            log::warn!("could not save the settings: {err}");
+            self.show_notice(t!("settings.save_failed").to_string(), true, cx);
+        }
+    }
+
+    fn set_theme(&mut self, choice: ThemeChoice, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.theme = choice;
+        Theme::change(theme_mode(choice, window), Some(window), cx);
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    fn set_auto_lock(&mut self, minutes: u16, cx: &mut Context<Self>) {
+        self.settings.auto_lock_minutes = minutes;
+        self.platform
+            .set_auto_lock(self.settings.auto_lock().as_secs());
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    fn set_clipboard_seconds(&mut self, seconds: u16, cx: &mut Context<Self>) {
+        self.settings.clipboard_seconds = seconds;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    fn set_autostart(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        match kura_platform::set_autostart(enabled) {
+            Ok(()) => {
+                self.settings.autostart = enabled;
+                self.save_settings(cx);
+            }
+            Err(err) => {
+                log::warn!("could not change the startup entry: {err}");
+                self.show_notice(t!("settings.autostart_failed").to_string(), true, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn set_start_in_tray(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.start_in_tray = enabled;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    fn set_destroy_on_hide(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.destroy_on_hide = enabled;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    fn set_capture_protection(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hwnd) = controller::window_hwnd(window) else {
+            self.show_notice(t!("settings.capture_failed").to_string(), true, cx);
+            return;
+        };
+        match kura_platform::set_capture_protection(hwnd, enabled) {
+            Ok(()) => {
+                self.settings.screenshot_protection = enabled;
+                self.save_settings(cx);
+            }
+            Err(err) => {
+                log::warn!("could not change capture protection: {err}");
+                self.show_notice(t!("settings.capture_failed").to_string(), true, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Save the window position, then destroy or hide the window. Called from
+    /// the native close button and from Alt+F4.
+    fn close_to_tray(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_server_url(cx);
+        self.settings.window = Some(crate::settings::placement(window));
+        self.save_settings(cx);
+        if self.page != Page::Vault {
+            // Do not keep a half-finished login, and its master password, alive
+            // while the window sits in the tray.
+            self.backend.cancel();
+        }
+        if self.settings.destroy_on_hide {
+            window.defer(cx, |window, _| window.remove_window());
+        } else if let Some(hwnd) = controller::window_hwnd(window) {
+            kura_platform::hide_window(hwnd);
+        }
+    }
+
     // ------------------------------------------------------------------ views
 
     fn render_header(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -911,16 +1079,14 @@ impl Root {
                         )
                     })
                     .child(
-                        Button::new("language")
+                        Button::new("settings")
                             .ghost()
                             .compact()
-                            .label(if self.locale == "ja" {
-                                "English"
-                            } else {
-                                "日本語"
-                            })
+                            .icon(IconName::Settings)
+                            .tooltip(t!("settings.open"))
+                            .accessibility_label(t!("settings.open"))
                             .on_click(
-                                cx.listener(|this, _, window, cx| this.toggle_language(window, cx)),
+                                cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
                             ),
                     ),
             )
@@ -1680,6 +1846,302 @@ impl Root {
                 )
             })
     }
+
+    fn render_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let max_height = window.viewport_size().height - px(64.);
+
+        let overlay = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .p_6()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.35))
+            .occlude()
+            .track_focus(&self.settings_focus)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.close_settings(cx)),
+            );
+
+        let auto_lock_choices = {
+            let mut choices = Vec::new();
+            for minutes in [1u16, 5, 15, 30, 60] {
+                choices.push(SettingsChoice {
+                    label: t!("settings.minutes", minutes = minutes).to_string(),
+                    active: self.settings.auto_lock_minutes == minutes,
+                    on_click: Rc::new(cx.listener(move |this, _, _, cx| {
+                        this.set_auto_lock(minutes, cx);
+                    })),
+                });
+            }
+            Rc::new(choices)
+        };
+        let auto_lock = choice_menu(
+            "setting-auto-lock",
+            t!(
+                "settings.minutes",
+                minutes = self.settings.auto_lock_minutes
+            )
+            .to_string(),
+            auto_lock_choices,
+        );
+
+        let clipboard_choices = {
+            let mut choices = Vec::new();
+            for seconds in [15u16, 30, 60] {
+                choices.push(SettingsChoice {
+                    label: t!("settings.seconds", seconds = seconds).to_string(),
+                    active: self.settings.clipboard_seconds == seconds,
+                    on_click: Rc::new(cx.listener(move |this, _, _, cx| {
+                        this.set_clipboard_seconds(seconds, cx);
+                    })),
+                });
+            }
+            Rc::new(choices)
+        };
+        let clipboard = choice_menu(
+            "setting-clipboard",
+            t!(
+                "settings.seconds",
+                seconds = self.settings.clipboard_seconds
+            )
+            .to_string(),
+            clipboard_choices,
+        );
+
+        let theme_choices = {
+            let choices = vec![
+                SettingsChoice {
+                    label: t!("settings.theme_system").to_string(),
+                    active: self.settings.theme == ThemeChoice::System,
+                    on_click: Rc::new(cx.listener(|this, _, window, cx| {
+                        this.set_theme(ThemeChoice::System, window, cx);
+                    })),
+                },
+                SettingsChoice {
+                    label: t!("settings.theme_light").to_string(),
+                    active: self.settings.theme == ThemeChoice::Light,
+                    on_click: Rc::new(cx.listener(|this, _, window, cx| {
+                        this.set_theme(ThemeChoice::Light, window, cx);
+                    })),
+                },
+                SettingsChoice {
+                    label: t!("settings.theme_dark").to_string(),
+                    active: self.settings.theme == ThemeChoice::Dark,
+                    on_click: Rc::new(cx.listener(|this, _, window, cx| {
+                        this.set_theme(ThemeChoice::Dark, window, cx);
+                    })),
+                },
+            ];
+            Rc::new(choices)
+        };
+        let theme_label = match self.settings.theme {
+            ThemeChoice::System => t!("settings.theme_system"),
+            ThemeChoice::Light => t!("settings.theme_light"),
+            ThemeChoice::Dark => t!("settings.theme_dark"),
+        }
+        .to_string();
+        let theme = choice_menu("setting-theme", theme_label, theme_choices);
+
+        let language_choices = {
+            let choices = vec![
+                SettingsChoice {
+                    label: "日本語".to_string(),
+                    active: self.locale == "ja",
+                    on_click: Rc::new(cx.listener(|this, _, window, cx| {
+                        this.set_language("ja".to_string(), window, cx);
+                    })),
+                },
+                SettingsChoice {
+                    label: "English".to_string(),
+                    active: self.locale == "en",
+                    on_click: Rc::new(cx.listener(|this, _, window, cx| {
+                        this.set_language("en".to_string(), window, cx);
+                    })),
+                },
+            ];
+            Rc::new(choices)
+        };
+        let language = choice_menu(
+            "setting-language",
+            if self.locale == "ja" {
+                "日本語".to_string()
+            } else {
+                "English".to_string()
+            },
+            language_choices,
+        );
+
+        let autostart = {
+            let root = cx.entity().downgrade();
+            Switch::new("setting-autostart")
+                .checked(self.settings.autostart)
+                .accessibility_label(t!("settings.autostart"))
+                .on_click(move |requested, _, cx| {
+                    let requested = *requested;
+                    if let Some(root) = root.upgrade() {
+                        root.update(cx, |root, cx| root.set_autostart(requested, cx));
+                    }
+                })
+        };
+        let start_in_tray = {
+            let root = cx.entity().downgrade();
+            Switch::new("setting-start-in-tray")
+                .checked(self.settings.start_in_tray)
+                .accessibility_label(t!("settings.start_in_tray"))
+                .on_click(move |requested, _, cx| {
+                    let requested = *requested;
+                    if let Some(root) = root.upgrade() {
+                        root.update(cx, |root, cx| root.set_start_in_tray(requested, cx));
+                    }
+                })
+        };
+        let destroy_on_hide = {
+            let root = cx.entity().downgrade();
+            Switch::new("setting-destroy-on-hide")
+                .checked(self.settings.destroy_on_hide)
+                .accessibility_label(t!("settings.destroy_on_hide"))
+                .on_click(move |requested, _, cx| {
+                    let requested = *requested;
+                    if let Some(root) = root.upgrade() {
+                        root.update(cx, |root, cx| root.set_destroy_on_hide(requested, cx));
+                    }
+                })
+        };
+        let capture = {
+            let root = cx.entity().downgrade();
+            Switch::new("setting-capture")
+                .checked(self.settings.screenshot_protection)
+                .accessibility_label(t!("settings.capture"))
+                .on_click(move |requested, window, cx| {
+                    let requested = *requested;
+                    if let Some(root) = root.upgrade() {
+                        root.update(cx, |root, cx| {
+                            root.set_capture_protection(requested, window, cx);
+                        });
+                    }
+                })
+        };
+
+        let rows = vec![
+            v_flex()
+                .gap_1()
+                .child(div().text_sm().child(t!("settings.server_url")))
+                .child(Input::new(&self.server_url).w_full())
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(t!("settings.server_url_hint")),
+                )
+                .into_any_element(),
+            setting_row(
+                t!("settings.auto_lock").to_string(),
+                t!("settings.auto_lock_hint").to_string(),
+                muted,
+                auto_lock,
+            )
+            .into_any_element(),
+            setting_row(
+                t!("settings.clipboard").to_string(),
+                t!("settings.clipboard_hint").to_string(),
+                muted,
+                clipboard,
+            )
+            .into_any_element(),
+            setting_row(
+                t!("settings.theme").to_string(),
+                String::new(),
+                muted,
+                theme,
+            )
+            .into_any_element(),
+            setting_row(
+                t!("settings.language").to_string(),
+                String::new(),
+                muted,
+                language,
+            )
+            .into_any_element(),
+            setting_row(
+                t!("settings.autostart").to_string(),
+                t!("settings.autostart_hint").to_string(),
+                muted,
+                autostart,
+            )
+            .into_any_element(),
+            setting_row(
+                t!("settings.start_in_tray").to_string(),
+                String::new(),
+                muted,
+                start_in_tray,
+            )
+            .into_any_element(),
+            setting_row(
+                t!("settings.destroy_on_hide").to_string(),
+                t!("settings.destroy_on_hide_hint").to_string(),
+                muted,
+                destroy_on_hide,
+            )
+            .into_any_element(),
+            setting_row(
+                t!("settings.capture").to_string(),
+                t!("settings.capture_hint").to_string(),
+                muted,
+                capture,
+            )
+            .into_any_element(),
+        ];
+
+        let card = v_flex()
+            .w(px(600.))
+            .max_w_full()
+            .max_h(max_height)
+            .overflow_hidden()
+            .bg(cx.theme().background)
+            .border_1()
+            .border_color(border)
+            .rounded_lg()
+            .p_5()
+            .gap_4()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .child(t!("settings.title")),
+                    )
+                    .child(
+                        Button::new("settings-close")
+                            .ghost()
+                            .icon(AssetIcon::X)
+                            .tooltip(t!("detail.close"))
+                            .accessibility_label(t!("detail.close"))
+                            .on_click(cx.listener(|this, _, _, cx| this.close_settings(cx))),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .gap_4()
+                    .children(rows),
+            );
+
+        overlay.child(card)
+    }
 }
 
 impl Render for Root {
@@ -1693,6 +2155,9 @@ impl Render for Root {
             .selected_id
             .is_some()
             .then(|| self.render_detail_dialog(window, cx).into_any_element());
+        let settings = self
+            .settings_open
+            .then(|| self.render_settings(window, cx).into_any_element());
         let notice = self.notice.clone();
         let notice_color = if self.notice_error {
             cx.theme().danger
@@ -1710,6 +2175,7 @@ impl Render for Root {
             .child(self.render_header(cx))
             .child(page)
             .when_some(modal, |this, modal| this.child(modal))
+            .when_some(settings, |this, settings| this.child(settings))
             .when_some(notice, |this, notice| {
                 this.child(
                     div()
@@ -1735,6 +2201,61 @@ fn field(label: String, input: impl IntoElement, muted: Hsla) -> impl IntoElemen
         .gap_1()
         .child(div().text_sm().text_color(muted).child(label))
         .child(input)
+}
+
+fn setting_row(
+    label: String,
+    hint: String,
+    muted: Hsla,
+    control: impl IntoElement,
+) -> impl IntoElement {
+    h_flex()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(div().text_sm().child(label))
+                .when(!hint.is_empty(), |this| {
+                    this.child(div().text_xs().text_color(muted).child(hint))
+                }),
+        )
+        .child(control)
+}
+
+fn choice_menu(
+    id: &'static str,
+    label: String,
+    choices: Rc<Vec<SettingsChoice>>,
+) -> impl IntoElement {
+    Button::new(id)
+        .ghost()
+        .compact()
+        .label(label)
+        .dropdown_caret(true)
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(px(180.));
+            for choice in choices.iter() {
+                let on_click = choice.on_click.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(choice.label.clone())
+                        .checked(choice.active)
+                        .on_click(move |event, window, cx| on_click(event, window, cx)),
+                );
+            }
+            menu
+        })
+}
+
+fn theme_mode(choice: ThemeChoice, window: &Window) -> ThemeMode {
+    match choice {
+        ThemeChoice::System => window.appearance().into(),
+        ThemeChoice::Light => ThemeMode::Light,
+        ThemeChoice::Dark => ThemeMode::Dark,
+    }
 }
 
 fn filter_button(
@@ -1798,13 +2319,5 @@ fn problem_text(problem: Option<&Problem>) -> String {
             CoreError::InsecureUrl => t!("error.insecure_url").to_string(),
             CoreError::Internal => t!("error.internal").to_string(),
         },
-    }
-}
-
-/// The language of the system, when it is one Kura speaks.
-fn system_locale() -> String {
-    match sys_locale::get_locale() {
-        Some(locale) if locale.starts_with("ja") => "ja".to_string(),
-        _ => "en".to_string(),
     }
 }

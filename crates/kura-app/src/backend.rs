@@ -4,6 +4,7 @@
 //! on the UI thread and the UI never waits for the network.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use kura_core::{
@@ -38,6 +39,8 @@ pub enum Command {
     SendEmailCode,
     /// Give up on the login and drop the session.
     Cancel,
+    /// Drop the session because the vault was locked.
+    Lock,
     /// Pull the vault again, ignoring the revision date.
     Sync,
     /// Decrypt one item for the detail pane.
@@ -57,6 +60,8 @@ pub enum Command {
 pub enum Event {
     /// The vault is open.
     LoggedIn,
+    /// The session was dropped, whether by the user or by an automatic lock.
+    Locked,
     /// A second factor is needed.
     TwoFactorRequired(TwoFactorChallenge),
     /// A fresh list of items.
@@ -85,11 +90,15 @@ pub enum Event {
     Failed(CoreError),
 }
 
+#[derive(Clone)]
 pub struct Backend {
     commands: UnboundedSender<Command>,
     /// Wakes a worker that is waiting on the network so a lock can drop the
     /// session without waiting for the request to finish.
     cancel: Arc<Notify>,
+    /// Whether the worker currently holds an unlocked vault. Read when the
+    /// window is recreated after sitting in the tray.
+    unlocked: Arc<AtomicBool>,
 }
 
 impl Backend {
@@ -102,11 +111,19 @@ impl Backend {
         let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let cancel = Arc::new(Notify::new());
-        handle.spawn(worker(command_rx, event_tx, cancel.clone(), saved));
+        let unlocked = Arc::new(AtomicBool::new(false));
+        handle.spawn(worker(
+            command_rx,
+            event_tx,
+            cancel.clone(),
+            unlocked.clone(),
+            saved,
+        ));
         (
             Self {
                 commands: command_tx,
                 cancel,
+                unlocked,
             },
             event_rx,
         )
@@ -120,6 +137,17 @@ impl Backend {
     pub fn cancel(&self) {
         self.cancel.notify_waiters();
         self.send(Command::Cancel);
+    }
+
+    /// Drop the session and tell the UI, whether a window exists or not.
+    pub fn lock(&self) {
+        self.cancel.notify_waiters();
+        self.send(Command::Lock);
+    }
+
+    /// Whether a vault is currently unlocked in the worker.
+    pub fn is_unlocked(&self) -> bool {
+        self.unlocked.load(Ordering::SeqCst)
     }
 }
 
@@ -135,6 +163,7 @@ async fn worker(
     mut commands: UnboundedReceiver<Command>,
     events: UnboundedSender<Event>,
     cancel: Arc<Notify>,
+    unlocked: Arc<AtomicBool>,
     mut saved: Option<SavedSession>,
 ) {
     let mut session: Option<Session> = None;
@@ -149,7 +178,7 @@ async fn worker(
                 let Some(command) = command else {
                     break;
                 };
-                handle(command, &mut session, &mut saved, &events, &cancel).await;
+                handle(command, &mut session, &mut saved, &events, &cancel, &unlocked).await;
             }
             _ = ticker.tick() => {
                 let cancelled = if let Some(current) = session.as_ref()
@@ -164,6 +193,7 @@ async fn worker(
                 };
                 if cancelled {
                     session = None;
+                    unlocked.store(false, Ordering::SeqCst);
                 }
             }
         }
@@ -176,6 +206,7 @@ async fn handle(
     saved: &mut Option<SavedSession>,
     events: &UnboundedSender<Event>,
     cancel: &Notify,
+    unlocked: &AtomicBool,
 ) {
     match command {
         Command::Login {
@@ -189,15 +220,30 @@ async fn handle(
                 .as_ref()
                 .filter(|data| data.matches(&server_url, &email))
             {
-                match Vault::restore(data, &password).await {
+                let restored = tokio::select! {
+                    _ = cancel.notified() => None,
+                    result = Vault::restore(data, &password) => Some(result),
+                };
+                let Some(restored) = restored else {
+                    return;
+                };
+                match restored {
                     Ok(vault) => {
-                        match vault.sync(false).await {
+                        let synced = tokio::select! {
+                            _ = cancel.notified() => None,
+                            result = vault.sync(false) => Some(result),
+                        };
+                        let Some(synced) = synced else {
+                            return;
+                        };
+                        match synced {
                             Ok(()) => {
                                 *session = Some(Session {
                                     vault,
                                     email,
                                     password: None,
                                 });
+                                unlocked.store(true, Ordering::SeqCst);
                                 let _ = events.send(Event::LoggedIn);
                                 if let Some(current) = session.as_ref()
                                     && let Err(err) = publish(current, events).await
@@ -236,7 +282,11 @@ async fn handle(
                 }
             };
 
-            match vault.login(&email, &password).await {
+            let outcome = tokio::select! {
+                _ = cancel.notified() => return,
+                result = vault.login(&email, &password) => result,
+            };
+            match outcome {
                 Ok(LoginOutcome::LoggedIn) => {
                     remember(&vault, saved, &email, &password).await;
                     *session = Some(Session {
@@ -244,9 +294,18 @@ async fn handle(
                         email,
                         password: None,
                     });
+                    unlocked.store(true, Ordering::SeqCst);
                     let _ = events.send(Event::LoggedIn);
+                    let mut cancelled = false;
                     if let Some(current) = session.as_ref() {
-                        refresh(current, false, events).await;
+                        cancelled = tokio::select! {
+                            _ = cancel.notified() => true,
+                            _ = refresh(current, false, events) => false,
+                        };
+                    }
+                    if cancelled {
+                        *session = None;
+                        unlocked.store(false, Ordering::SeqCst);
                     }
                 }
                 Ok(LoginOutcome::TwoFactorRequired(challenge)) => {
@@ -255,6 +314,7 @@ async fn handle(
                         email,
                         password: Some(Zeroizing::new(password)),
                     });
+                    unlocked.store(false, Ordering::SeqCst);
                     let _ = events.send(Event::TwoFactorRequired(challenge));
                 }
                 Err(err) => {
@@ -273,17 +333,27 @@ async fn handle(
                 return;
             };
 
-            match current
-                .vault
-                .submit_two_factor(&current.email, password, &method, &code)
-                .await
-            {
+            let result = tokio::select! {
+                _ = cancel.notified() => return,
+                result = current
+                    .vault
+                    .submit_two_factor(&current.email, password, &method, &code) => result,
+            };
+            match result {
                 Ok(()) => {
                     if let Some(password) = current.password.take() {
                         remember(&current.vault, saved, &current.email, &password).await;
                     }
                     let _ = events.send(Event::LoggedIn);
-                    refresh(current, false, events).await;
+                    unlocked.store(true, Ordering::SeqCst);
+                    let cancelled = tokio::select! {
+                        _ = cancel.notified() => true,
+                        _ = refresh(current, false, events) => false,
+                    };
+                    if cancelled {
+                        *session = None;
+                        unlocked.store(false, Ordering::SeqCst);
+                    }
                 }
                 Err(err) => {
                     let _ = events.send(Event::Failed(err));
@@ -301,11 +371,13 @@ async fn handle(
                 return;
             };
 
-            match current
-                .vault
-                .send_email_code(&current.email, password)
-                .await
-            {
+            let result = tokio::select! {
+                _ = cancel.notified() => return,
+                result = current
+                    .vault
+                    .send_email_code(&current.email, password) => result,
+            };
+            match result {
                 Ok(()) => {
                     let _ = events.send(Event::EmailCodeSent);
                 }
@@ -317,6 +389,14 @@ async fn handle(
 
         Command::Cancel => {
             *session = None;
+            unlocked.store(false, Ordering::SeqCst);
+        }
+
+        Command::Lock => {
+            *session = None;
+            unlocked.store(false, Ordering::SeqCst);
+            log::info!("the vault is locked");
+            let _ = events.send(Event::Locked);
         }
 
         Command::Sync => {
@@ -332,6 +412,7 @@ async fn handle(
             };
             if cancelled {
                 *session = None;
+                unlocked.store(false, Ordering::SeqCst);
             }
         }
 
@@ -351,6 +432,7 @@ async fn handle(
             };
             let Some(result) = result else {
                 *session = None;
+                unlocked.store(false, Ordering::SeqCst);
                 return;
             };
             match result {
@@ -379,6 +461,7 @@ async fn handle(
             };
             let Some(result) = result else {
                 *session = None;
+                unlocked.store(false, Ordering::SeqCst);
                 return;
             };
             match result {
@@ -404,6 +487,7 @@ async fn handle(
             };
             let Some(result) = result else {
                 *session = None;
+                unlocked.store(false, Ordering::SeqCst);
                 return;
             };
             let _ = events.send(Event::PasswordCopied(result));

@@ -5178,6 +5178,9 @@ dependencies = [
  "clipboard-win",
  "gpui-kit",
  "kura-core",
+ "kura-platform",
+ "log",
+ "raw-window-handle",
  "rust-i18n",
  "serde",
  "serde_json",
@@ -5205,6 +5208,15 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "kura-platform"
+version = "0.0.0"
+dependencies = [
+ "log",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

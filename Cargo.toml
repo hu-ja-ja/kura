@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kura-core", "crates/kura-app"]
+members = ["crates/kura-core", "crates/kura-platform", "crates/kura-app"]
 
 [workspace.package]
 edition = "2024"
