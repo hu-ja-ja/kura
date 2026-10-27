@@ -12,12 +12,17 @@ destroyed while sitting in the tray).
 
 ## Status
 
-Milestone M1: sign in with the master password and a TOTP or email code, sync,
+Milestone M2: sign in with the master password and a TOTP or email code, sync,
 and a searchable read-only list with type, folder and favourite filters plus a
-15-minute background sync. The UI speaks Japanese and English.
+15-minute background sync. An item opens a detail dialog with its fields,
+per-field reveal and copy, a live TOTP, and safe URL opening. Notes can be
+selected and copied in part. A right-click on a list row copies the username or
+password without opening it. Copied secrets are wiped after 30 seconds, and
+Windows is asked to keep them out of clipboard history and the cloud clipboard.
+Locking drops the session and the decrypted data. The UI speaks Japanese and
+English.
 
-Details, copy, TOTP display, locking, editing, the tray and the settings screen
-are not in yet.
+Editing, auto-lock, the tray and the settings screen are not in yet.
 
 ## Fonts
 

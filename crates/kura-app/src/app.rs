@@ -1,22 +1,32 @@
 //! The window: login, two-factor and the vault list.
 
+use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
+use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{
-    Input, InputContentType, InputEvent, InputState, OtpEvent, OtpInput, OtpState,
+    Input, InputContentType, InputEvent, InputState, OtpEvent, OtpInput, OtpState, Textarea,
+    TextareaState,
 };
 use gpui_kit::component::list::{List, ListState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use kura_core::{
-    CoreError, ItemKind, TwoFactorChallenge, TwoFactorMethod, VaultFilter, VaultSnapshot,
+    CoreError, ItemKind, TwoFactorChallenge, TwoFactorMethod, VaultFilter, VaultItemDetail,
+    VaultSnapshot,
 };
 use rust_i18n::t;
+use zeroize::Zeroizing;
 
 use crate::backend::{Backend, Command, Event};
+use crate::detail::{DetailRow, otp_digits, rows as detail_rows, tick_totp};
 use crate::list::{VaultDelegate, kind_label};
 use crate::settings::Settings;
 
@@ -42,6 +52,21 @@ const TYPE_FILTERS: &[ItemKind] = &[
     ItemKind::Other,
 ];
 
+const MASK: &str = "••••••••••••";
+const CLIPBOARD_CLEAR: Duration = Duration::from_secs(30);
+const NOTICE_TIME: Duration = Duration::from_secs(2);
+const TOTP_RETRY_SECS: u32 = 5;
+
+type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// One folder in the filter menu. Built before the menu so the entries can
+/// borrow the root's listeners.
+struct FolderChoice {
+    label: String,
+    checked: bool,
+    on_click: ClickHandler,
+}
+
 pub struct Root {
     backend: Backend,
     settings: Settings,
@@ -53,13 +78,26 @@ pub struct Root {
     password: Entity<InputState>,
     search: Entity<InputState>,
     otp: Entity<OtpState>,
+    notes: Entity<TextareaState>,
     list: Entity<ListState<VaultDelegate>>,
+    modal_focus: FocusHandle,
     snapshot: Arc<VaultSnapshot>,
     filter: VaultFilter,
     show_server: bool,
     busy: bool,
     problem: Option<Problem>,
     sync_problem: Option<Problem>,
+    detail: Option<VaultItemDetail>,
+    detail_problem: Option<Problem>,
+    detail_loading: bool,
+    selected_id: Option<String>,
+    revealed: HashSet<usize>,
+    detail_generation: u64,
+    notice: Option<String>,
+    notice_error: bool,
+    notice_generation: u64,
+    copied: Option<Zeroizing<String>>,
+    clipboard_generation: u64,
     challenge: Option<TwoFactorChallenge>,
     method: Option<TwoFactorMethod>,
     email_code_sent: bool,
@@ -90,12 +128,39 @@ impl Root {
         let password = cx.new(|cx| InputState::new(window, cx).masked(true));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(t!("vault.search")));
         let otp = cx.new(|cx| OtpState::new(6, window, cx));
+        let notes = cx.new(|cx| TextareaState::new(window, cx));
+
         let list = cx.new(|cx| {
             ListState::new(
                 VaultDelegate::new(Arc::new(VaultSnapshot::default())),
                 window,
                 cx,
             )
+        });
+        let modal_focus = cx.focus_handle();
+        let root = cx.entity().downgrade();
+        list.update(cx, |list, _| {
+            list.delegate_mut().set_on_open(move |id, _window, cx| {
+                let _ = root.update(cx, |root, cx| {
+                    root.open_item(id.to_string(), cx);
+                });
+            });
+        });
+        let copy_root = cx.entity().downgrade();
+        let password_root = copy_root.clone();
+        list.update(cx, |list, _| {
+            list.delegate_mut()
+                .set_on_copy_text(move |value, _window, cx| {
+                    let _ = copy_root.update(cx, |root, cx| {
+                        root.copy_value(value.to_string(), cx);
+                    });
+                });
+            list.delegate_mut()
+                .set_on_copy_password(move |id, _window, cx| {
+                    let _ = password_root.update(cx, |root, _| {
+                        root.copy_item_password(id.to_string());
+                    });
+                });
         });
 
         let mut subscriptions = vec![];
@@ -130,13 +195,21 @@ impl Root {
         subscriptions.push(cx.subscribe_in(
             &search,
             window,
-            |this, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::Change) {
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => {
                     let query = this.search.read(cx).value().to_string();
                     this.list.update(cx, |list, cx| {
                         list.set_query(&query, window, cx);
                     });
                 }
+                InputEvent::PressEnter { .. } => {
+                    let selected = this.list.read(cx).delegate().selected_item_id();
+                    this.list.update(cx, |list, cx| list.focus(window, cx));
+                    if let Some(id) = selected {
+                        this.open_item(id, cx);
+                    }
+                }
+                _ => {}
             },
         ));
         subscriptions.push(
@@ -154,13 +227,49 @@ impl Root {
                 if keystroke.key == "f" && keystroke.modifiers.control {
                     // Swallow the key so the letter does not land in the search field.
                     cx.stop_propagation();
-                    this.focus_search(window, cx);
+                    if this.selected_id.is_none() {
+                        this.focus_search(window, cx);
+                    }
+                    return;
+                }
+
+                // The OTP input has no paste support of its own.
+                if this.page == Page::TwoFactor
+                    && keystroke.key == "v"
+                    && keystroke.modifiers.control
+                    && this.otp.read(cx).focus_handle(cx).is_focused(window)
+                {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        let length = this.otp.read(cx).len();
+                        let digits = otp_digits(&text, length);
+                        if !digits.is_empty() {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            let complete = digits.chars().count() == length;
+                            this.otp
+                                .update(cx, |otp, cx| otp.set_value(digits, window, cx));
+                            if complete {
+                                this.submit_two_factor(cx);
+                            }
+                        }
+                    }
                     return;
                 }
 
                 if this.page != Page::Vault {
                     return;
                 }
+                if keystroke.key == "l" && keystroke.modifiers.control {
+                    cx.stop_propagation();
+                    this.lock(cx);
+                    return;
+                }
+                if keystroke.key == "escape" && this.selected_id.is_some() {
+                    cx.stop_propagation();
+                    this.close_detail(window, cx);
+                    return;
+                }
+
                 if !this.search.read(cx).focus_handle(cx).is_focused(window) {
                     return;
                 }
@@ -172,11 +281,11 @@ impl Root {
                     }
                     "escape" => {
                         cx.stop_propagation();
-                        if this.search.read(cx).value().is_empty() {
-                            this.list.update(cx, |list, cx| list.focus(window, cx));
-                        } else {
+                        if !this.search.read(cx).value().is_empty() {
                             this.search
                                 .update(cx, |search, cx| search.set_value("", window, cx));
+                        } else {
+                            this.list.update(cx, |list, cx| list.focus(window, cx));
                         }
                     }
                     _ => {}
@@ -212,13 +321,26 @@ impl Root {
             password,
             search,
             otp,
+            notes,
             list,
+            modal_focus,
             snapshot: Arc::new(VaultSnapshot::default()),
             filter: VaultFilter::All,
             show_server: false,
             busy: false,
             problem: None,
             sync_problem: None,
+            detail: None,
+            detail_problem: None,
+            detail_loading: false,
+            selected_id: None,
+            revealed: HashSet::new(),
+            detail_generation: 0,
+            notice: None,
+            notice_error: false,
+            notice_generation: 0,
+            copied: None,
+            clipboard_generation: 0,
             challenge: None,
             method: None,
             email_code_sent: false,
@@ -261,6 +383,10 @@ impl Root {
                 });
             }
             Event::Snapshot(snapshot) => {
+                // A late answer from the session that was just locked.
+                if self.page != Page::Vault {
+                    return;
+                }
                 self.busy = false;
                 self.sync_problem = None;
 
@@ -285,12 +411,90 @@ impl Root {
                     list.delegate_mut().set_loading(false);
                     cx.notify();
                 });
+
+                // Keep the open detail in step with the new snapshot.
+                if let Some(id) = self.selected_id.clone() {
+                    if self.snapshot.items.iter().any(|item| item.id == id) {
+                        let row = self.list.read(cx).delegate().row_of(&id);
+                        let list = self.list.clone();
+                        self.in_window(cx, move |window, cx| {
+                            list.update(cx, |list, cx| {
+                                list.set_selected_index(row.map(IndexPath::new), window, cx);
+                            });
+                        });
+                        if !self.detail_loading {
+                            self.request_detail(id);
+                        }
+                    } else {
+                        self.forget_detail(cx);
+                    }
+                }
             }
             Event::EmailCodeSent => {
                 self.busy = false;
                 self.email_code_sent = true;
             }
+            Event::Detail(detail) => {
+                if self.selected_id.as_deref() == Some(detail.id.as_str()) {
+                    self.detail_loading = false;
+                    self.detail_problem = None;
+                    self.detail = Some(*detail);
+                    let notes = self
+                        .detail
+                        .as_ref()
+                        .and_then(|detail| detail.notes.clone())
+                        .unwrap_or_default();
+                    let notes_state = self.notes.clone();
+                    self.in_window(cx, move |window, cx| {
+                        notes_state.update(cx, |state, cx| state.set_value(notes, window, cx));
+                    });
+                    self.start_totp_ticks(cx);
+                }
+            }
+            Event::Totp { id, totp } => {
+                if self.selected_id.as_deref() == Some(id.as_str())
+                    && let Some(detail) = self.detail.as_mut()
+                    && let Some(current) = detail.totp.as_mut()
+                {
+                    *current = totp;
+                    self.detail_problem = None;
+                }
+            }
+            Event::DetailFailed { id, err } => {
+                if self.selected_id.as_deref() == Some(id.as_str()) {
+                    self.detail_loading = false;
+                    self.detail_problem = Some(Problem::Core(err));
+                }
+            }
+            Event::PasswordCopied(result) => {
+                if self.page == Page::Vault {
+                    match result {
+                        Ok(password) => self.copy_value(password, cx),
+                        Err(err) => {
+                            let problem = Problem::Core(err);
+                            self.show_notice(problem_text(Some(&problem)), true, cx);
+                        }
+                    }
+                }
+            }
+            Event::TotpFailed { id, err } => {
+                if self.selected_id.as_deref() == Some(id.as_str()) {
+                    let no_totp = err == CoreError::NoTotp;
+                    self.detail_problem = Some(Problem::Core(err));
+                    if no_totp {
+                        if let Some(detail) = self.detail.as_mut() {
+                            detail.totp = None;
+                        }
+                    } else if let Some(totp) =
+                        self.detail.as_mut().and_then(|detail| detail.totp.as_mut())
+                    {
+                        // Try again shortly instead of freezing on a stale code.
+                        totp.remaining = TOTP_RETRY_SECS;
+                    }
+                }
+            }
             Event::Failed(err) => {
+                let was_busy = self.busy;
                 self.busy = false;
                 let problem = Problem::Core(err);
                 if self.page == Page::Vault {
@@ -299,7 +503,9 @@ impl Root {
                         list.delegate_mut().set_loading(false);
                         cx.notify();
                     });
-                } else {
+                } else if was_busy {
+                    // A late failure from a session that was already locked
+                    // must not appear as a login error.
                     self.problem = Some(problem);
                     if self.page == Page::TwoFactor {
                         // A rejected code is worth typing again from scratch.
@@ -363,8 +569,209 @@ impl Root {
         self.backend.send(Command::Sync);
     }
 
+    fn open_item(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.selected_id.as_deref() == Some(id.as_str())
+            && (self.detail.is_some() || self.detail_loading)
+        {
+            return;
+        }
+        self.selected_id = Some(id.clone());
+        self.detail = None;
+        self.detail_problem = None;
+        self.notice = None;
+        self.request_detail(id);
+        let focus = self.modal_focus.clone();
+        self.in_window(cx, move |window, cx| {
+            window.defer(cx, move |window, cx| focus.focus(window, cx));
+        });
+        cx.notify();
+    }
+
+    fn request_detail(&mut self, id: String) {
+        self.revealed.clear();
+        self.detail_loading = true;
+        self.detail_problem = None;
+        self.detail_generation += 1;
+        self.backend.send(Command::Detail { id });
+    }
+
+    /// Drop the decrypted item and everything derived from it.
+    fn forget_detail(&mut self, cx: &mut Context<Self>) {
+        self.detail = None;
+        self.detail_problem = None;
+        self.detail_loading = false;
+        self.selected_id = None;
+        self.revealed.clear();
+        self.detail_generation += 1;
+        self.notice = None;
+        self.notice_error = false;
+        let notes = self.notes.clone();
+        self.in_window(cx, move |window, cx| {
+            notes.update(cx, |state, cx| state.set_value("", window, cx));
+        });
+    }
+
+    fn close_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.forget_detail(cx);
+        self.list.update(cx, |list, cx| {
+            list.set_selected_index(None, window, cx);
+            list.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Manual lock. Dropping the session drops the keys; the UI drops the
+    /// decrypted data it was holding.
+    fn lock(&mut self, cx: &mut Context<Self>) {
+        self.backend.cancel();
+        self.page = Page::Login;
+        self.busy = false;
+        self.problem = None;
+        self.sync_problem = None;
+        self.challenge = None;
+        self.method = None;
+        self.filter = VaultFilter::All;
+        self.snapshot = Arc::new(VaultSnapshot::default());
+        self.forget_detail(cx);
+        self.clear_clipboard(cx);
+        self.clear_password(cx);
+        self.clear_code(cx);
+
+        let list = self.list.clone();
+        let search = self.search.clone();
+        let email = self.email.clone();
+        let empty = Arc::new(VaultSnapshot::default());
+        self.in_window(cx, move |window, cx| {
+            list.update(cx, |list, cx| {
+                list.delegate_mut().set_snapshot(empty);
+                list.delegate_mut().set_filter(VaultFilter::All);
+                list.set_query("", window, cx);
+                list.set_selected_index(None, window, cx);
+            });
+            search.update(cx, |search, cx| search.set_value("", window, cx));
+            email.update(cx, |email, cx| {
+                email.focus_handle(cx).focus(window, cx);
+            });
+        });
+        cx.notify();
+    }
+
+    /// Put a value on the clipboard and wipe it again after a delay, unless
+    /// something else has replaced it by then.
+    fn copy_value(&mut self, value: String, cx: &mut Context<Self>) {
+        if value.is_empty() {
+            return;
+        }
+        if !crate::clipboard::copy(&value) {
+            cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
+        }
+        self.copied = Some(Zeroizing::new(value));
+        self.clipboard_generation += 1;
+        let clipboard_generation = self.clipboard_generation;
+
+        let this = cx.entity();
+        cx.spawn(async move |_this, cx| {
+            cx.background_executor().timer(CLIPBOARD_CLEAR).await;
+            cx.update_entity(&this, |this, cx| {
+                if this.clipboard_generation == clipboard_generation {
+                    this.clear_clipboard(cx);
+                }
+            });
+        })
+        .detach();
+
+        self.show_notice(t!("detail.copied").to_string(), false, cx);
+    }
+
+    fn show_notice(&mut self, text: String, error: bool, cx: &mut Context<Self>) {
+        self.notice = Some(text);
+        self.notice_error = error;
+        self.notice_generation += 1;
+        let notice_generation = self.notice_generation;
+
+        let this = cx.entity();
+        cx.spawn(async move |_this, cx| {
+            cx.background_executor().timer(NOTICE_TIME).await;
+            cx.update_entity(&this, |this, cx| {
+                if this.notice_generation == notice_generation {
+                    this.notice = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+
+        cx.notify();
+    }
+
+    fn clear_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(copied) = self.copied.take() else {
+            return;
+        };
+        self.clipboard_generation += 1;
+        // shortcut: if the clipboard cannot be read at the deadline, leave it
+        // alone rather than risk wiping something the user copied elsewhere.
+        let current = crate::clipboard::text();
+        if current.as_deref() == Some(copied.as_str()) && !crate::clipboard::clear() {
+            cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+        }
+        cx.notify();
+    }
+
+    fn copy_item_password(&mut self, id: String) {
+        self.backend.send(Command::CopyPassword { id });
+    }
+
+    fn open_detail_url(&mut self, url: String, cx: &mut Context<Self>) {
+        if let Some(url) = kura_core::openable_url(&url) {
+            cx.open_url(&url);
+        }
+    }
+
+    /// Keep the TOTP countdown moving and ask for a fresh code at zero.
+    fn start_totp_ticks(&self, cx: &mut Context<Self>) {
+        let Some(detail) = &self.detail else {
+            return;
+        };
+        if detail.totp.is_none() {
+            return;
+        }
+        let generation = self.detail_generation;
+        let id = detail.id.clone();
+        let this = cx.entity();
+
+        cx.spawn(async move |_this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let keep_going = cx.update_entity(&this, |this, cx| {
+                    if this.detail_generation != generation || this.page != Page::Vault {
+                        return false;
+                    }
+                    let Some(detail) = this.detail.as_mut() else {
+                        return false;
+                    };
+                    let Some(totp) = detail.totp.as_mut() else {
+                        return false;
+                    };
+                    let before = totp.remaining;
+                    if tick_totp(totp) {
+                        this.backend.send(Command::Totp { id: id.clone() });
+                    }
+                    if totp.remaining != before {
+                        cx.notify();
+                    }
+                    true
+                });
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     fn back_to_login(&mut self, cx: &mut Context<Self>) {
-        self.backend.send(Command::Cancel);
+        self.backend.cancel();
         self.page = Page::Login;
         self.challenge = None;
         self.method = None;
@@ -478,6 +885,15 @@ impl Root {
                                 .label(t!("vault.sync"))
                                 .loading(self.busy)
                                 .on_click(cx.listener(|this, _, _, _| this.sync())),
+                        )
+                        .child(
+                            Button::new("lock")
+                                .ghost()
+                                .compact()
+                                .icon(AssetIcon::Lock)
+                                .label(t!("vault.lock"))
+                                .tooltip(t!("vault.lock_hint"))
+                                .on_click(cx.listener(|this, _, _, cx| this.lock(cx))),
                         )
                     })
                     .child(
@@ -752,18 +1168,59 @@ impl Root {
             ));
         }
 
-        let mut folder_chips = Vec::new();
-        for folder in folders {
-            let active = filter == VaultFilter::Folder(folder.id.clone());
-            folder_chips.push(filter_button(
-                SharedString::from(format!("folder-{}", folder.id)),
-                folder.name,
-                Some(IconName::Folder),
-                active,
-                VaultFilter::Folder(folder.id),
-                cx,
-            ));
+        let active_folder = match &filter {
+            VaultFilter::Folder(id) => folders
+                .iter()
+                .find(|folder| &folder.id == id)
+                .map(|folder| folder.name.clone()),
+            _ => None,
+        };
+        let folder_label = active_folder.unwrap_or_else(|| t!("filter.folder").to_string());
+        let has_folders = !folders.is_empty();
+
+        let mut choices = Vec::new();
+        if has_folders {
+            choices.push(FolderChoice {
+                label: t!("filter.all_folders").to_string(),
+                checked: !matches!(filter, VaultFilter::Folder(_)),
+                on_click: Rc::new(cx.listener(|this, _, window, cx| {
+                    this.set_filter(VaultFilter::All, window, cx);
+                })),
+            });
+            for folder in folders {
+                let id = folder.id.clone();
+                let active = filter == VaultFilter::Folder(id.clone());
+                choices.push(FolderChoice {
+                    label: folder.name,
+                    checked: active,
+                    on_click: Rc::new(cx.listener(move |this, _, window, cx| {
+                        this.set_filter(VaultFilter::Folder(id.clone()), window, cx);
+                    })),
+                });
+            }
         }
+        let choices = Rc::new(choices);
+
+        let folder_button = Button::new("filter-folder")
+            .ghost()
+            .compact()
+            .icon(IconName::Folder)
+            .label(folder_label)
+            .dropdown_caret(true)
+            .selected(matches!(filter, VaultFilter::Folder(_)))
+            .dropdown_menu(move |menu, _, _| {
+                let mut menu = menu.min_w(px(220.)).max_h(px(320.)).scrollable(true);
+                for choice in choices.iter() {
+                    let on_click = choice.on_click.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(choice.label.clone())
+                            .icon(IconName::Folder)
+                            .checked(choice.checked)
+                            .on_click(move |event, window, cx| on_click(event, window, cx)),
+                    );
+                }
+                menu
+            });
 
         h_flex()
             .flex_wrap()
@@ -791,8 +1248,8 @@ impl Root {
             ))
             .child(divider(cx))
             .children(type_chips)
-            .when(!folder_chips.is_empty(), |this| {
-                this.child(divider(cx)).children(folder_chips)
+            .when(has_folders, |this| {
+                this.child(divider(cx)).child(folder_button)
             })
     }
 
@@ -800,9 +1257,12 @@ impl Root {
         let failures = self.snapshot.decrypt_failures;
         let has_sync_error = self.sync_problem.is_some();
         let sync_error = problem_text(self.sync_problem.as_ref());
+        let border = cx.theme().border;
 
         v_flex()
             .flex_1()
+            .min_h_0()
+            .min_w_0()
             .child(self.render_search(cx))
             .child(self.render_filters(cx))
             .when(failures > 0, |this| {
@@ -823,7 +1283,7 @@ impl Root {
                         .px_4()
                         .py_2()
                         .border_b_1()
-                        .border_color(cx.theme().border)
+                        .border_color(border)
                         .child(
                             div()
                                 .flex_1()
@@ -842,23 +1302,376 @@ impl Root {
             })
             .child(List::new(&self.list).flex_1())
     }
+
+    fn render_detail_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let danger = cx.theme().danger;
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let max_height = window.viewport_size().height - px(64.);
+        let card_height = (window.viewport_size().height * 0.8).min(max_height);
+
+        let data = self.detail.as_ref().map(|detail| {
+            let folder = detail.folder_id.as_ref().and_then(|id| {
+                self.snapshot
+                    .folders
+                    .iter()
+                    .find(|folder| &folder.id == id)
+                    .map(|folder| folder.name.clone())
+            });
+            (
+                detail.name.clone(),
+                detail.kind,
+                detail.favorite,
+                folder,
+                detail_rows(detail),
+            )
+        });
+        let detail_problem = self
+            .detail_problem
+            .as_ref()
+            .map(|problem| problem_text(Some(problem)));
+        let loading = self.detail_loading;
+
+        let overlay = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .p_6()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.35))
+            .occlude()
+            .track_focus(&self.modal_focus)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.close_detail(window, cx);
+                }),
+            );
+
+        let card = v_flex()
+            .w(px(560.))
+            .max_w_full()
+            .max_h(max_height)
+            .overflow_hidden()
+            .bg(cx.theme().background)
+            .border_1()
+            .border_color(border)
+            .rounded_lg()
+            .p_5()
+            .gap_4()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        let Some((name, kind, favorite, folder, rows)) = data else {
+            let (title, hint) = if loading {
+                (t!("detail.loading"), t!("detail.loading_hint"))
+            } else {
+                (t!("detail.empty"), t!("detail.empty_hint"))
+            };
+            let mut body = v_flex()
+                .gap_3()
+                .child(div().text_sm().text_color(muted).child(hint));
+            if let Some(problem) = detail_problem {
+                body = body.child(div().text_sm().text_color(danger).child(problem));
+                if let Some(id) = self.selected_id.clone() {
+                    body = body.child(
+                        Button::new("retry-detail")
+                            .secondary()
+                            .compact()
+                            .label(t!("common.retry"))
+                            .on_click(cx.listener(move |this, _, _, _| {
+                                this.request_detail(id.clone());
+                            })),
+                    );
+                }
+            }
+            return overlay.child(
+                card.child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(div().text_lg().font_weight(FontWeight::BOLD).child(title))
+                        .child(
+                            Button::new("detail-close")
+                                .ghost()
+                                .xsmall()
+                                .icon(AssetIcon::X)
+                                .tooltip(t!("detail.close"))
+                                .accessibility_label(t!("detail.close"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_detail(window, cx);
+                                })),
+                        ),
+                )
+                .child(body),
+            );
+        };
+
+        let meta = if let Some(folder) = &folder {
+            format!("{} · {folder}", kind_label(kind))
+        } else {
+            kind_label(kind)
+        };
+
+        let close = Button::new("detail-close")
+            .ghost()
+            .xsmall()
+            .icon(AssetIcon::X)
+            .tooltip(t!("detail.close"))
+            .accessibility_label(t!("detail.close"))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_detail(window, cx);
+            }));
+
+        let header = h_flex()
+            .items_start()
+            .justify_between()
+            .gap_3()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_lg()
+                                    .font_weight(FontWeight::BOLD)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(name),
+                            )
+                            .when(favorite, |this| {
+                                this.child(
+                                    Icon::new(IconName::StarFill)
+                                        .small()
+                                        .text_color(cx.theme().warning),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(meta),
+                    ),
+            )
+            .child(close);
+
+        let mut card = card.h(card_height).child(header);
+
+        if let Some(problem) = detail_problem {
+            let retry_id = self.selected_id.clone();
+            let mut banner = h_flex()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1().text_sm().text_color(danger).child(problem));
+            if let Some(id) = retry_id {
+                banner = banner.child(
+                    Button::new("retry-detail")
+                        .secondary()
+                        .compact()
+                        .label(t!("common.retry"))
+                        .on_click(cx.listener(move |this, _, _, _| {
+                            this.request_detail(id.clone());
+                        })),
+                );
+            }
+            card = card.child(banner);
+        }
+
+        let mut children = Vec::new();
+        for (ix, row) in rows.into_iter().enumerate() {
+            children.push(self.render_detail_row(ix, row, cx).into_any_element());
+        }
+        card = card.child(
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scrollbar()
+                .gap_4()
+                .children(children),
+        );
+
+        overlay.child(card)
+    }
+
+    fn render_detail_row(
+        &mut self,
+        ix: usize,
+        row: DetailRow,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let revealed = !row.secret || self.revealed.contains(&ix);
+        let value = if revealed {
+            row.value.clone()
+        } else {
+            MASK.to_string()
+        };
+
+        let mut actions = h_flex().items_center().gap_1();
+        if row.secret {
+            let icon = if revealed {
+                IconName::EyeOff
+            } else {
+                IconName::Eye
+            };
+            let tooltip = if revealed {
+                t!("detail.hide").to_string()
+            } else {
+                t!("detail.reveal").to_string()
+            };
+            actions = actions.child(
+                Button::new(SharedString::from(format!("reveal-{ix}")))
+                    .ghost()
+                    .xsmall()
+                    .icon(icon)
+                    .tooltip(tooltip.clone())
+                    .accessibility_label(tooltip)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.revealed.remove(&ix) {
+                            this.revealed.insert(ix);
+                        }
+                        cx.notify();
+                    })),
+            );
+        }
+        if row.copyable {
+            let copy_value = row.copy_value.clone().unwrap_or_else(|| row.value.clone());
+            actions = actions.child(
+                Button::new(SharedString::from(format!("copy-{ix}")))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Copy)
+                    .tooltip(t!("detail.copy"))
+                    .accessibility_label(t!("detail.copy"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.copy_value(copy_value.clone(), cx);
+                    })),
+            );
+        }
+        if let Some(url) = row.open_url.clone() {
+            actions = actions.child(
+                Button::new(SharedString::from(format!("open-{ix}")))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::ExternalLink)
+                    .tooltip(t!("detail.open"))
+                    .accessibility_label(t!("detail.open"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_detail_url(url.clone(), cx);
+                    })),
+            );
+        }
+
+        let value_element: AnyElement = if row.selectable {
+            Textarea::new(&self.notes)
+                .readonly(true)
+                .appearance(false)
+                .bordered(false)
+                .h(px(140.))
+                .text_sm()
+                .w_full()
+                .into_any_element()
+        } else {
+            div()
+                .text_sm()
+                .when(row.large, |this| {
+                    this.text_lg().font_weight(FontWeight::MEDIUM)
+                })
+                .when(row.multiline, |this| this.whitespace_normal())
+                .when(!row.multiline, |this| {
+                    this.overflow_hidden().text_ellipsis()
+                })
+                .child(value)
+                .into_any_element()
+        };
+
+        let suffix = row.suffix.clone();
+        v_flex()
+            .gap_1()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(row.label),
+            )
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(value_element))
+                    .child(actions),
+            )
+            .when_some(suffix, |this, suffix| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(suffix),
+                )
+            })
+    }
 }
 
 impl Render for Root {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let page: AnyElement = match self.page {
             Page::Login => self.render_login(cx).into_any_element(),
             Page::TwoFactor => self.render_two_factor(cx).into_any_element(),
             Page::Vault => self.render_vault(cx).into_any_element(),
         };
+        let modal = self
+            .selected_id
+            .is_some()
+            .then(|| self.render_detail_dialog(window, cx).into_any_element());
+        let notice = self.notice.clone();
+        let notice_color = if self.notice_error {
+            cx.theme().danger
+        } else {
+            cx.theme().success
+        };
+        let border = cx.theme().border;
 
         v_flex()
+            .relative()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .font_family("IBM Plex Sans JP")
             .child(self.render_header(cx))
             .child(page)
+            .when_some(modal, |this, modal| this.child(modal))
+            .when_some(notice, |this, notice| {
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom_3()
+                        .left_3()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(cx.theme().background)
+                        .border_1()
+                        .border_color(border)
+                        .text_xs()
+                        .text_color(notice_color)
+                        .child(notice),
+                )
+            })
     }
 }
 
@@ -920,6 +1733,9 @@ fn problem_text(problem: Option<&Problem>) -> String {
             CoreError::Network => t!("error.network").to_string(),
             CoreError::Timeout => t!("error.timeout").to_string(),
             CoreError::InvalidResponse => t!("error.invalid_response").to_string(),
+            CoreError::NotFound => t!("error.not_found").to_string(),
+            CoreError::NoTotp => t!("error.no_totp").to_string(),
+            CoreError::NoPassword => t!("error.no_password").to_string(),
             CoreError::Server(message) => {
                 format!("{}: {message}", t!("error.server"))
             }

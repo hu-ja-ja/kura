@@ -15,6 +15,12 @@ filter:
   favorites:
     en: "Favorites"
     ja: "お気に入り"
+  folder:
+    en: "Folder"
+    ja: "フォルダ"
+  all_folders:
+    en: "All folders"
+    ja: "すべてのフォルダ"
 
 login:
   title:
@@ -73,6 +79,18 @@ vault:
   sync:
     en: "Sync"
     ja: "同期"
+  lock:
+    en: "Lock"
+    ja: "ロック"
+  lock_hint:
+    en: "Lock and drop the decrypted vault (Ctrl+L)"
+    ja: "ロックして復号済みデータを破棄（Ctrl+L）"
+  copy_username:
+    en: "Copy username"
+    ja: "ユーザー名をコピー"
+  copy_password:
+    en: "Copy password"
+    ja: "パスワードをコピー"
   item_count:
     en: "%{count} items"
     ja: "%{count} 件"
@@ -91,6 +109,104 @@ vault:
   decrypt_failures:
     en: "%{count} items could not be read."
     ja: "%{count} 件を読み取れませんでした。"
+
+detail:
+  empty:
+    en: "Select an item."
+    ja: "項目を選択してください。"
+  empty_hint:
+    en: "Its details open here."
+    ja: "ここに詳細が表示されます。"
+  loading:
+    en: "Opening..."
+    ja: "読み込み中..."
+  loading_hint:
+    en: "Decrypting the item."
+    ja: "項目を復号しています。"
+  close:
+    en: "Close"
+    ja: "閉じる"
+  copied:
+    en: "Copied. The clipboard clears in 30 seconds."
+    ja: "コピーしました。30秒後にクリップボードを消去します。"
+  copy:
+    en: "Copy"
+    ja: "コピー"
+  reveal:
+    en: "Show value"
+    ja: "値を表示"
+  hide:
+    en: "Hide value"
+    ja: "値を隠す"
+  open:
+    en: "Open in browser"
+    ja: "ブラウザで開く"
+  username:
+    en: "Username"
+    ja: "ユーザー名"
+  password:
+    en: "Password"
+    ja: "パスワード"
+  uri:
+    en: "URL"
+    ja: "URL"
+  totp:
+    en: "One-time code"
+    ja: "ワンタイムコード"
+  totp_remaining:
+    en: "%{seconds}s left"
+    ja: "残り %{seconds} 秒"
+  cardholder:
+    en: "Cardholder"
+    ja: "カード名義"
+  brand:
+    en: "Brand"
+    ja: "ブランド"
+  card_number:
+    en: "Card number"
+    ja: "カード番号"
+  expiry:
+    en: "Expiry"
+    ja: "有効期限"
+  security_code:
+    en: "Security code"
+    ja: "セキュリティコード"
+  name:
+    en: "Name"
+    ja: "氏名"
+  company:
+    en: "Company"
+    ja: "会社"
+  email:
+    en: "Email"
+    ja: "メールアドレス"
+  phone:
+    en: "Phone"
+    ja: "電話番号"
+  address:
+    en: "Address"
+    ja: "住所"
+  ssn:
+    en: "SSN"
+    ja: "社会保障番号"
+  public_key:
+    en: "Public key"
+    ja: "公開鍵"
+  fingerprint:
+    en: "Fingerprint"
+    ja: "フィンガープリント"
+  private_key:
+    en: "Private key"
+    ja: "秘密鍵"
+  notes:
+    en: "Notes"
+    ja: "メモ"
+  custom_field:
+    en: "Custom field"
+    ja: "カスタムフィールド"
+  attachment:
+    en: "Attachment"
+    ja: "添付ファイル"
 
 item_kind:
   login:
@@ -140,6 +256,15 @@ error:
   invalid_response:
     en: "The server sent an answer Kura cannot read."
     ja: "サーバーの応答を解釈できませんでした。"
+  not_found:
+    en: "That item is no longer in the vault."
+    ja: "その項目は保管庫にありません。"
+  no_totp:
+    en: "This item has no one-time code."
+    ja: "この項目にワンタイムコードはありません。"
+  no_password:
+    en: "This item has no password."
+    ja: "この項目にパスワードはありません。"
   server:
     en: "The server refused the request"
     ja: "サーバーが要求を拒否しました"

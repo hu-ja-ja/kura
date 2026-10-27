@@ -7,8 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kura_core::{
-    CoreError, LoginOutcome, TwoFactorChallenge, TwoFactorMethod, Vault, VaultSnapshot,
+    CoreError, LoginOutcome, TotpCode, TwoFactorChallenge, TwoFactorMethod, Vault, VaultItemDetail,
+    VaultSnapshot,
 };
+use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::{MissedTickBehavior, interval};
 use zeroize::Zeroizing;
@@ -38,6 +40,18 @@ pub enum Command {
     Cancel,
     /// Pull the vault again, ignoring the revision date.
     Sync,
+    /// Decrypt one item for the detail pane.
+    Detail {
+        id: String,
+    },
+    /// Generate the current TOTP for the open item.
+    Totp {
+        id: String,
+    },
+    /// Copy a login's password straight from the list.
+    CopyPassword {
+        id: String,
+    },
 }
 
 pub enum Event {
@@ -49,11 +63,33 @@ pub enum Event {
     Snapshot(Arc<VaultSnapshot>),
     /// The server sent a code to the address in the challenge.
     EmailCodeSent,
+    /// A decrypted item for the detail pane.
+    Detail(Box<VaultItemDetail>),
+    /// A fresh TOTP for the open item.
+    Totp {
+        id: String,
+        totp: TotpCode,
+    },
+    /// The detail request failed. The list is unaffected.
+    DetailFailed {
+        id: String,
+        err: CoreError,
+    },
+    /// The TOTP request failed. The detail pane keeps the old item.
+    TotpFailed {
+        id: String,
+        err: CoreError,
+    },
+    /// A password for the list's copy button.
+    PasswordCopied(Result<String, CoreError>),
     Failed(CoreError),
 }
 
 pub struct Backend {
     commands: UnboundedSender<Command>,
+    /// Wakes a worker that is waiting on the network so a lock can drop the
+    /// session without waiting for the request to finish.
+    cancel: Arc<Notify>,
 }
 
 impl Backend {
@@ -61,10 +97,12 @@ impl Backend {
     pub fn spawn(handle: &tokio::runtime::Handle) -> (Self, UnboundedReceiver<Event>) {
         let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        handle.spawn(worker(command_rx, event_tx));
+        let cancel = Arc::new(Notify::new());
+        handle.spawn(worker(command_rx, event_tx, cancel.clone()));
         (
             Self {
                 commands: command_tx,
+                cancel,
             },
             event_rx,
         )
@@ -72,6 +110,12 @@ impl Backend {
 
     pub fn send(&self, command: Command) {
         let _ = self.commands.send(command);
+    }
+
+    /// Drop the session now, even when the worker is mid-request.
+    pub fn cancel(&self) {
+        self.cancel.notify_waiters();
+        self.send(Command::Cancel);
     }
 }
 
@@ -83,7 +127,11 @@ struct Session {
     password: Option<Zeroizing<String>>,
 }
 
-async fn worker(mut commands: UnboundedReceiver<Command>, events: UnboundedSender<Event>) {
+async fn worker(
+    mut commands: UnboundedReceiver<Command>,
+    events: UnboundedSender<Event>,
+    cancel: Arc<Notify>,
+) {
     let mut session: Option<Session> = None;
     let mut ticker = interval(sync_interval());
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -96,20 +144,33 @@ async fn worker(mut commands: UnboundedReceiver<Command>, events: UnboundedSende
                 let Some(command) = command else {
                     break;
                 };
-                handle(command, &mut session, &events).await;
+                handle(command, &mut session, &events, &cancel).await;
             }
             _ = ticker.tick() => {
-                if let Some(current) = session.as_ref()
+                let cancelled = if let Some(current) = session.as_ref()
                     && current.vault.is_unlocked()
                 {
-                    refresh(current, false, &events).await;
+                    tokio::select! {
+                        _ = cancel.notified() => true,
+                        _ = refresh(current, false, &events) => false,
+                    }
+                } else {
+                    false
+                };
+                if cancelled {
+                    session = None;
                 }
             }
         }
     }
 }
 
-async fn handle(command: Command, session: &mut Option<Session>, events: &UnboundedSender<Event>) {
+async fn handle(
+    command: Command,
+    session: &mut Option<Session>,
+    events: &UnboundedSender<Event>,
+    cancel: &Notify,
+) {
     match command {
         Command::Login {
             server_url,
@@ -205,11 +266,93 @@ async fn handle(command: Command, session: &mut Option<Session>, events: &Unboun
         }
 
         Command::Sync => {
-            let Some(current) = session.as_ref() else {
-                let _ = events.send(Event::Failed(CoreError::Internal));
+            let cancelled = {
+                let Some(current) = session.as_ref() else {
+                    let _ = events.send(Event::Failed(CoreError::Internal));
+                    return;
+                };
+                tokio::select! {
+                    _ = cancel.notified() => true,
+                    _ = refresh(current, true, events) => false,
+                }
+            };
+            if cancelled {
+                *session = None;
+            }
+        }
+
+        Command::Detail { id } => {
+            let result = {
+                let Some(current) = session.as_ref() else {
+                    let _ = events.send(Event::DetailFailed {
+                        id,
+                        err: CoreError::Internal,
+                    });
+                    return;
+                };
+                tokio::select! {
+                    _ = cancel.notified() => None,
+                    result = current.vault.detail(&id) => Some(result),
+                }
+            };
+            let Some(result) = result else {
+                *session = None;
                 return;
             };
-            refresh(current, true, events).await;
+            match result {
+                Ok(detail) => {
+                    let _ = events.send(Event::Detail(Box::new(detail)));
+                }
+                Err(err) => {
+                    let _ = events.send(Event::DetailFailed { id, err });
+                }
+            }
+        }
+
+        Command::Totp { id } => {
+            let result = {
+                let Some(current) = session.as_ref() else {
+                    let _ = events.send(Event::TotpFailed {
+                        id,
+                        err: CoreError::Internal,
+                    });
+                    return;
+                };
+                tokio::select! {
+                    _ = cancel.notified() => None,
+                    result = current.vault.totp(&id) => Some(result),
+                }
+            };
+            let Some(result) = result else {
+                *session = None;
+                return;
+            };
+            match result {
+                Ok(totp) => {
+                    let _ = events.send(Event::Totp { id, totp });
+                }
+                Err(err) => {
+                    let _ = events.send(Event::TotpFailed { id, err });
+                }
+            }
+        }
+
+        Command::CopyPassword { id } => {
+            let result = {
+                let Some(current) = session.as_ref() else {
+                    let _ = events.send(Event::PasswordCopied(Err(CoreError::Internal)));
+                    return;
+                };
+                tokio::select! {
+                    _ = cancel.notified() => None,
+                    result = current.vault.password(&id) => Some(result),
+                }
+            };
+            let Some(result) = result else {
+                *session = None;
+                return;
+            };
+            let _ = events.send(Event::PasswordCopied(result));
         }
     }
 }

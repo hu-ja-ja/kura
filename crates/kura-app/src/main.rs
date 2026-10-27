@@ -2,12 +2,14 @@
 
 use std::borrow::Cow;
 
-use gpui_kit::assets::Assets;
+use gpui_kit::assets::AllAssets;
 use gpui_kit::component::Theme;
 use gpui_kit::*;
 
 mod app;
 mod backend;
+mod clipboard;
+mod detail;
 mod list;
 mod settings;
 
@@ -27,7 +29,7 @@ fn main() {
             .expect("failed to start the tokio runtime"),
     ));
 
-    let app = gpui_kit::application().with_assets(Assets);
+    let app = gpui_kit::application().with_assets(AllAssets);
 
     app.run(move |cx| {
         gpui_kit::init(cx);

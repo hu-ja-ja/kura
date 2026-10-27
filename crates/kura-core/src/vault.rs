@@ -15,12 +15,12 @@ use bitwarden_core::auth::login::{
 use bitwarden_core::{ApiError, FromClient};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::{SyncClient, SyncError, SyncRequest};
-use bitwarden_vault::FolderSyncHandler;
+use bitwarden_vault::{CipherId, CipherView, FolderSyncHandler, GetCipherError};
 use tokio::time::timeout;
 
 use crate::cipher_sync::CipherSyncHandler;
 use crate::error::CoreError;
-use crate::model::VaultSnapshot;
+use crate::model::{TotpCode, VaultItemDetail, VaultSnapshot};
 use crate::server::client_settings;
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -217,6 +217,36 @@ impl Vault {
         })
     }
 
+    /// Decrypt one item for the detail pane.
+    pub async fn detail(&self, id: &str) -> Result<VaultItemDetail, CoreError> {
+        Ok(VaultItemDetail::from(self.cipher_view(id).await?))
+    }
+
+    /// Generate the current TOTP for one item, without handing out the seed.
+    pub async fn totp(&self, id: &str) -> Result<TotpCode, CoreError> {
+        let view = self.cipher_view(id).await?;
+        crate::model::totp_for_view(&view).ok_or(CoreError::NoTotp)
+    }
+
+    /// The password of one login, for the list's copy button.
+    pub async fn password(&self, id: &str) -> Result<String, CoreError> {
+        let view = self.cipher_view(id).await?;
+        view.login
+            .and_then(|login| login.password)
+            .filter(|password| !password.trim().is_empty())
+            .ok_or(CoreError::NoPassword)
+    }
+
+    async fn cipher_view(&self, id: &str) -> Result<CipherView, CoreError> {
+        let id: CipherId = id.parse().map_err(|_| CoreError::NotFound)?;
+        self.client
+            .vault()
+            .ciphers()
+            .get(id)
+            .await
+            .map_err(map_get_error)
+    }
+
     fn read_login_response(
         &self,
         response: PasswordLoginResponse,
@@ -290,6 +320,13 @@ fn map_email_error(err: TwoFactorEmailError) -> CoreError {
     }
 }
 
+fn map_get_error(err: GetCipherError) -> CoreError {
+    match err {
+        GetCipherError::ItemNotFound(_) => CoreError::NotFound,
+        GetCipherError::Crypto(_) | GetCipherError::Repository(_) => CoreError::Internal,
+    }
+}
+
 fn map_sync_error(err: SyncError) -> CoreError {
     match err {
         SyncError::Api(api) => map_api_error(&api),
@@ -355,6 +392,23 @@ mod tests {
     fn client_constructs() {
         let vault = Vault::connect(None).unwrap();
         assert!(!vault.is_unlocked());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_item_id_is_not_found() {
+        let vault = Vault::connect(None).unwrap();
+        assert_eq!(
+            vault.detail("not-a-uuid").await.err(),
+            Some(CoreError::NotFound)
+        );
+        assert_eq!(
+            vault.totp("not-a-uuid").await.err(),
+            Some(CoreError::NotFound)
+        );
+        assert_eq!(
+            vault.password("not-a-uuid").await.err(),
+            Some(CoreError::NotFound)
+        );
     }
 
     #[test]

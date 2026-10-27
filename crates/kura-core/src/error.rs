@@ -21,6 +21,12 @@ pub enum CoreError {
     Timeout,
     /// The server answered with something Kura cannot read.
     InvalidResponse,
+    /// The item is no longer in the vault.
+    NotFound,
+    /// The item has no TOTP key.
+    NoTotp,
+    /// The item has no password field.
+    NoPassword,
     /// The server refused the request. Carries the server's message.
     Server(String),
     /// The server URL cannot be used.

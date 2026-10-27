@@ -9,6 +9,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+clipboard-win = { version = "5", features = ["std"] }
 gpui-kit = "0.8"
 kura-core = { path = "../kura-core" }
 rust-i18n = "4"
