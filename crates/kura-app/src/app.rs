@@ -111,6 +111,7 @@ impl Root {
         backend: Backend,
         events: tokio::sync::mpsc::UnboundedReceiver<Event>,
         settings: Settings,
+        saved_email: Option<String>,
     ) -> Self {
         let locale = settings
             .language
@@ -125,6 +126,9 @@ impl Root {
             server_url.update(cx, |input, cx| input.set_value(url, window, cx));
         }
         let email = cx.new(|cx| InputState::new(window, cx));
+        if let Some(saved) = saved_email.clone() {
+            email.update(cx, |input, cx| input.set_value(saved, window, cx));
+        }
         let password = cx.new(|cx| InputState::new(window, cx).masked(true));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(t!("vault.search")));
         let otp = cx.new(|cx| OtpState::new(6, window, cx));
@@ -140,9 +144,9 @@ impl Root {
         let modal_focus = cx.focus_handle();
         let root = cx.entity().downgrade();
         list.update(cx, |list, _| {
-            list.delegate_mut().set_on_open(move |id, _window, cx| {
+            list.delegate_mut().set_on_open(move |id, window, cx| {
                 let _ = root.update(cx, |root, cx| {
-                    root.open_item(id.to_string(), cx);
+                    root.open_item(id.to_string(), window, cx);
                 });
             });
         });
@@ -208,7 +212,7 @@ impl Root {
                     let selected = this.list.read(cx).delegate().selected_item_id();
                     this.list.update(cx, |list, cx| list.focus(window, cx));
                     if let Some(id) = selected {
-                        this.open_item(id, cx);
+                        this.open_item(id, window, cx);
                     }
                 }
                 _ => {}
@@ -263,7 +267,7 @@ impl Root {
                 }
                 if keystroke.key == "l" && keystroke.modifiers.control {
                     cx.stop_propagation();
-                    this.lock(cx);
+                    this.lock(window, cx);
                     return;
                 }
                 if keystroke.key == "escape" && this.selected_id.is_some() {
@@ -305,9 +309,16 @@ impl Root {
         })
         .detach();
 
-        // Put the cursor in the first field once the window has drawn.
-        cx.defer_in(window, |this, window, cx| {
-            this.email.update(cx, |input, cx| {
+        // Put the cursor in the field the user still has to fill once the window
+        // has drawn: only the password when a login is saved.
+        let has_saved = saved_email.is_some();
+        cx.defer_in(window, move |this, window, cx| {
+            let input = if has_saved {
+                this.password.clone()
+            } else {
+                this.email.clone()
+            };
+            input.update(cx, |input, cx| {
                 input.focus_handle(cx).focus(window, cx);
             });
         });
@@ -361,7 +372,7 @@ impl Root {
                 self.sync_problem = None;
                 self.challenge = None;
                 self.method = None;
-                self.clear_password(cx);
+                self.clear_password(None, cx);
                 // The server URL was accepted, so keep it for the next start.
                 let _ = self.settings.save();
                 self.list.update(cx, |list, cx| {
@@ -376,9 +387,9 @@ impl Root {
                 self.page = Page::TwoFactor;
                 self.problem = None;
                 self.email_code_sent = false;
-                self.clear_password(cx);
+                self.clear_password(None, cx);
                 let otp = self.otp.clone();
-                self.in_window(cx, move |window, cx| {
+                self.in_window(None, cx, move |window, cx| {
                     otp.update(cx, |state, cx| {
                         state.focus_handle(cx).focus(window, cx);
                     });
@@ -419,7 +430,7 @@ impl Root {
                     if self.snapshot.items.iter().any(|item| item.id == id) {
                         let row = self.list.read(cx).delegate().row_of(&id);
                         let list = self.list.clone();
-                        self.in_window(cx, move |window, cx| {
+                        self.in_window(None, cx, move |window, cx| {
                             list.update(cx, |list, cx| {
                                 list.set_selected_index(row.map(IndexPath::new), window, cx);
                             });
@@ -428,7 +439,7 @@ impl Root {
                             self.request_detail(id);
                         }
                     } else {
-                        self.forget_detail(cx);
+                        self.forget_detail(None, cx);
                     }
                 }
             }
@@ -447,7 +458,7 @@ impl Root {
                         .and_then(|detail| detail.notes.clone())
                         .unwrap_or_default();
                     let notes_state = self.notes.clone();
-                    self.in_window(cx, move |window, cx| {
+                    self.in_window(None, cx, move |window, cx| {
                         notes_state.update(cx, |state, cx| state.set_value(notes, window, cx));
                     });
                     self.start_totp_ticks(cx);
@@ -511,7 +522,7 @@ impl Root {
                     self.problem = Some(problem);
                     if self.page == Page::TwoFactor {
                         // A rejected code is worth typing again from scratch.
-                        self.clear_code(cx);
+                        self.clear_code(None, cx);
                     }
                 }
             }
@@ -571,7 +582,7 @@ impl Root {
         self.backend.send(Command::Sync);
     }
 
-    fn open_item(&mut self, id: String, cx: &mut Context<Self>) {
+    fn open_item(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_id.as_deref() == Some(id.as_str())
             && (self.detail.is_some() || self.detail_loading)
         {
@@ -583,9 +594,7 @@ impl Root {
         self.notice = None;
         self.request_detail(id);
         let focus = self.modal_focus.clone();
-        self.in_window(cx, move |window, cx| {
-            window.defer(cx, move |window, cx| focus.focus(window, cx));
-        });
+        window.defer(cx, move |window, cx| focus.focus(window, cx));
         cx.notify();
     }
 
@@ -598,7 +607,7 @@ impl Root {
     }
 
     /// Drop the decrypted item and everything derived from it.
-    fn forget_detail(&mut self, cx: &mut Context<Self>) {
+    fn forget_detail(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         self.detail = None;
         self.detail_problem = None;
         self.detail_loading = false;
@@ -608,13 +617,13 @@ impl Root {
         self.notice = None;
         self.notice_error = false;
         let notes = self.notes.clone();
-        self.in_window(cx, move |window, cx| {
+        self.in_window(window, cx, move |window, cx| {
             notes.update(cx, |state, cx| state.set_value("", window, cx));
         });
     }
 
     fn close_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.forget_detail(cx);
+        self.forget_detail(Some(window), cx);
         self.list.update(cx, |list, cx| {
             list.set_selected_index(None, window, cx);
             list.focus(window, cx);
@@ -624,7 +633,7 @@ impl Root {
 
     /// Manual lock. Dropping the session drops the keys; the UI drops the
     /// decrypted data it was holding.
-    fn lock(&mut self, cx: &mut Context<Self>) {
+    fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.backend.cancel();
         self.page = Page::Login;
         self.busy = false;
@@ -634,26 +643,24 @@ impl Root {
         self.method = None;
         self.filter = VaultFilter::All;
         self.snapshot = Arc::new(VaultSnapshot::default());
-        self.forget_detail(cx);
+        self.forget_detail(Some(window), cx);
         self.clear_clipboard(cx);
-        self.clear_password(cx);
-        self.clear_code(cx);
+        self.clear_password(Some(window), cx);
+        self.clear_code(Some(window), cx);
 
         let list = self.list.clone();
         let search = self.search.clone();
         let email = self.email.clone();
         let empty = Arc::new(VaultSnapshot::default());
-        self.in_window(cx, move |window, cx| {
-            list.update(cx, |list, cx| {
-                list.delegate_mut().set_snapshot(empty);
-                list.delegate_mut().set_filter(VaultFilter::All);
-                list.set_query("", window, cx);
-                list.set_selected_index(None, window, cx);
-            });
-            search.update(cx, |search, cx| search.set_value("", window, cx));
-            email.update(cx, |email, cx| {
-                email.focus_handle(cx).focus(window, cx);
-            });
+        list.update(cx, |list, cx| {
+            list.delegate_mut().set_snapshot(empty);
+            list.delegate_mut().set_filter(VaultFilter::All);
+            list.set_query("", window, cx);
+            list.set_selected_index(None, window, cx);
+        });
+        search.update(cx, |search, cx| search.set_value("", window, cx));
+        email.update(cx, |email, cx| {
+            email.focus_handle(cx).focus(window, cx);
         });
         cx.notify();
     }
@@ -772,17 +779,17 @@ impl Root {
         .detach();
     }
 
-    fn back_to_login(&mut self, cx: &mut Context<Self>) {
+    fn back_to_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.backend.cancel();
         self.page = Page::Login;
         self.challenge = None;
         self.method = None;
         self.problem = None;
         self.busy = false;
-        self.clear_code(cx);
+        self.clear_code(Some(window), cx);
     }
 
-    fn toggle_language(&mut self, cx: &mut Context<Self>) {
+    fn toggle_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.locale = if self.locale == "ja" {
             "en".to_string()
         } else {
@@ -793,11 +800,8 @@ impl Root {
         let _ = self.settings.save();
 
         let placeholder = t!("vault.search").to_string();
-        let search = self.search.clone();
-        self.in_window(cx, move |window, cx| {
-            search.update(cx, |search, cx| {
-                search.set_placeholder(placeholder, window, cx)
-            });
+        self.search.update(cx, |search, cx| {
+            search.set_placeholder(placeholder, window, cx)
         });
 
         cx.notify();
@@ -816,27 +820,35 @@ impl Root {
         cx.notify();
     }
 
-    fn clear_password(&mut self, cx: &mut Context<Self>) {
+    fn clear_password(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         let password = self.password.clone();
-        self.in_window(cx, move |window, cx| {
+        self.in_window(window, cx, move |window, cx| {
             password.update(cx, |input, cx| input.set_value("", window, cx));
         });
     }
 
-    fn clear_code(&mut self, cx: &mut Context<Self>) {
+    fn clear_code(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         let otp = self.otp.clone();
-        self.in_window(cx, move |window, cx| {
+        self.in_window(window, cx, move |window, cx| {
             otp.update(cx, |state, cx| state.set_value("", window, cx));
         });
     }
 
+    /// Run `f` against this window. A handler that is already inside a window
+    /// event has to pass that window: the app cannot lend out the same window
+    /// while it is being updated, and refuses without telling anyone.
     fn in_window<R>(
         &self,
+        window: Option<&mut Window>,
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut Window, &mut App) -> R,
     ) -> Option<R> {
-        cx.update_window(self.window, move |_, window, cx| f(window, cx))
-            .ok()
+        match window {
+            Some(window) => Some(f(window, cx)),
+            None => cx
+                .update_window(self.window, move |_, window, cx| f(window, cx))
+                .ok(),
+        }
     }
 
     /// Ctrl+F puts the cursor in the search field.
@@ -895,7 +907,7 @@ impl Root {
                                 .icon(AssetIcon::Lock)
                                 .label(t!("vault.lock"))
                                 .tooltip(t!("vault.lock_hint"))
-                                .on_click(cx.listener(|this, _, _, cx| this.lock(cx))),
+                                .on_click(cx.listener(|this, _, window, cx| this.lock(window, cx))),
                         )
                     })
                     .child(
@@ -907,7 +919,9 @@ impl Root {
                             } else {
                                 "日本語"
                             })
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_language(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.toggle_language(window, cx)),
+                            ),
                     ),
             )
     }
@@ -1142,7 +1156,9 @@ impl Root {
                             Button::new("back")
                                 .secondary()
                                 .label(t!("common.back"))
-                                .on_click(cx.listener(|this, _, _, cx| this.back_to_login(cx))),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.back_to_login(window, cx)
+                                })),
                         )
                         .child(
                             Button::new("verify")

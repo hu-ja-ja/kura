@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kura_core::{
-    CoreError, LoginOutcome, TotpCode, TwoFactorChallenge, TwoFactorMethod, Vault, VaultItemDetail,
-    VaultSnapshot,
+    CoreError, LoginOutcome, SavedSession, TotpCode, TwoFactorChallenge, TwoFactorMethod, Vault,
+    VaultItemDetail, VaultSnapshot,
 };
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -94,11 +94,15 @@ pub struct Backend {
 
 impl Backend {
     /// Start the worker and hand back the channel its events arrive on.
-    pub fn spawn(handle: &tokio::runtime::Handle) -> (Self, UnboundedReceiver<Event>) {
+    /// `saved` is the login kept from the last sign-in, if any.
+    pub fn spawn(
+        handle: &tokio::runtime::Handle,
+        saved: Option<SavedSession>,
+    ) -> (Self, UnboundedReceiver<Event>) {
         let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let cancel = Arc::new(Notify::new());
-        handle.spawn(worker(command_rx, event_tx, cancel.clone()));
+        handle.spawn(worker(command_rx, event_tx, cancel.clone(), saved));
         (
             Self {
                 commands: command_tx,
@@ -131,6 +135,7 @@ async fn worker(
     mut commands: UnboundedReceiver<Command>,
     events: UnboundedSender<Event>,
     cancel: Arc<Notify>,
+    mut saved: Option<SavedSession>,
 ) {
     let mut session: Option<Session> = None;
     let mut ticker = interval(sync_interval());
@@ -144,7 +149,7 @@ async fn worker(
                 let Some(command) = command else {
                     break;
                 };
-                handle(command, &mut session, &events, &cancel).await;
+                handle(command, &mut session, &mut saved, &events, &cancel).await;
             }
             _ = ticker.tick() => {
                 let cancelled = if let Some(current) = session.as_ref()
@@ -168,6 +173,7 @@ async fn worker(
 async fn handle(
     command: Command,
     session: &mut Option<Session>,
+    saved: &mut Option<SavedSession>,
     events: &UnboundedSender<Event>,
     cancel: &Notify,
 ) {
@@ -177,6 +183,51 @@ async fn handle(
             email,
             password,
         } => {
+            // A saved login answers the password locally: no sign-in round trip
+            // and no second factor, since the server already accepted both.
+            if let Some(data) = saved
+                .as_ref()
+                .filter(|data| data.matches(&server_url, &email))
+            {
+                match Vault::restore(data, &password).await {
+                    Ok(vault) => {
+                        match vault.sync(false).await {
+                            Ok(()) => {
+                                *session = Some(Session {
+                                    vault,
+                                    email,
+                                    password: None,
+                                });
+                                let _ = events.send(Event::LoggedIn);
+                                if let Some(current) = session.as_ref()
+                                    && let Err(err) = publish(current, events).await
+                                {
+                                    let _ = events.send(Event::Failed(err));
+                                }
+                                return;
+                            }
+                            // The token was revoked or expired: sign in again.
+                            Err(CoreError::Rejected(_)) => {
+                                *saved = None;
+                                crate::session::clear();
+                            }
+                            Err(err) => {
+                                let _ = events.send(Event::Failed(err));
+                                return;
+                            }
+                        }
+                    }
+                    // A typo, or a master password changed on another device.
+                    // Only the server can tell them apart, so sign in and let it
+                    // answer; a changed password replaces the saved login.
+                    Err(CoreError::InvalidCredentials) => {}
+                    Err(err) => {
+                        let _ = events.send(Event::Failed(err));
+                        return;
+                    }
+                }
+            }
+
             let vault = match Vault::connect(Some(&server_url)) {
                 Ok(vault) => vault,
                 Err(err) => {
@@ -187,6 +238,7 @@ async fn handle(
 
             match vault.login(&email, &password).await {
                 Ok(LoginOutcome::LoggedIn) => {
+                    remember(&vault, saved, &email, &password).await;
                     *session = Some(Session {
                         vault,
                         email,
@@ -227,7 +279,9 @@ async fn handle(
                 .await
             {
                 Ok(()) => {
-                    current.password = None;
+                    if let Some(password) = current.password.take() {
+                        remember(&current.vault, saved, &current.email, &password).await;
+                    }
                     let _ = events.send(Event::LoggedIn);
                     refresh(current, false, events).await;
                 }
@@ -359,16 +413,27 @@ async fn handle(
 
 /// Sync, then hand over the new list.
 async fn refresh(session: &Session, force: bool, events: &UnboundedSender<Event>) {
-    if let Err(err) = session.vault.sync(force).await {
+    let result = match session.vault.sync(force).await {
+        Ok(()) => publish(session, events).await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = result {
         let _ = events.send(Event::Failed(err));
+    }
+}
+
+/// Hand the current list to the UI. The caller syncs first.
+async fn publish(session: &Session, events: &UnboundedSender<Event>) -> Result<(), CoreError> {
+    let snapshot = session.vault.snapshot().await?;
+    let _ = events.send(Event::Snapshot(Arc::new(snapshot)));
+    Ok(())
+}
+
+/// Keep the login so the next start needs only the master password.
+async fn remember(vault: &Vault, saved: &mut Option<SavedSession>, email: &str, password: &str) {
+    let Ok(data) = vault.saved_session(email, password).await else {
         return;
-    }
-    match session.vault.snapshot().await {
-        Ok(snapshot) => {
-            let _ = events.send(Event::Snapshot(Arc::new(snapshot)));
-        }
-        Err(err) => {
-            let _ = events.send(Event::Failed(err));
-        }
-    }
+    };
+    let _ = crate::session::save(&data);
+    *saved = Some(data);
 }

@@ -15,4 +15,4 @@ pub use model::{
 };
 pub use search::{VaultFilter, filter_indices, search_indices};
 pub use server::client_settings;
-pub use vault::{LoginOutcome, TwoFactorChallenge, TwoFactorMethod, Vault};
+pub use vault::{LoginOutcome, SavedSession, TwoFactorChallenge, TwoFactorMethod, Vault};

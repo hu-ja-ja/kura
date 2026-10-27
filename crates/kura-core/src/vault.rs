@@ -12,16 +12,27 @@ use bitwarden_core::auth::login::{
     LoginError, PasswordLoginRequest, PasswordLoginResponse, TwoFactorEmailError,
     TwoFactorEmailRequest, TwoFactorProvider, TwoFactorRequest,
 };
-use bitwarden_core::{ApiError, FromClient};
+use bitwarden_core::client::login_method::UserLoginMethod;
+use bitwarden_core::client::persisted_state::{
+    AUTHENTICATION_TOKENS, AuthenticationTokens, USER_LOGIN_METHOD,
+};
+use bitwarden_core::key_management::account_cryptographic_state::WrappedAccountCryptographicState;
+use bitwarden_core::key_management::crypto::{InitUserCryptoMethod, InitUserCryptoRequest};
+use bitwarden_core::key_management::{
+    MasterPasswordUnlockData, PrivateKeySlotId, SymmetricKeySlotId,
+};
+use bitwarden_core::{ApiError, ClientSettings, FromClient, UserId};
+use bitwarden_crypto::{MasterKey, SymmetricCryptoKey};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::{SyncClient, SyncError, SyncRequest};
 use bitwarden_vault::{CipherId, CipherView, FolderSyncHandler, GetCipherError};
+use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 use crate::cipher_sync::CipherSyncHandler;
 use crate::error::CoreError;
 use crate::model::{TotpCode, VaultItemDetail, VaultSnapshot};
-use crate::server::client_settings;
+use crate::server::{client_settings, settings_from_urls};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const SYNC_TIMEOUT: Duration = Duration::from_secs(60);
@@ -59,12 +70,45 @@ pub enum TwoFactorMethod {
 pub struct Vault {
     client: PasswordManagerClient,
     sync: SyncClient,
+    identity_url: String,
+    api_url: String,
+}
+
+/// Everything needed to open the vault again with only the master password.
+///
+/// The tokens are bearer credentials, so the app keeps this on disk encrypted.
+/// The keys inside stay wrapped by the master key: the file alone opens nothing.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SavedSession {
+    /// The address the user signed in with. Not the KDF salt, which the server may set.
+    pub email: String,
+    pub user_id: UserId,
+    pub identity_url: String,
+    pub api_url: String,
+    pub tokens: AuthenticationTokens,
+    pub crypto_state: WrappedAccountCryptographicState,
+    pub unlock: MasterPasswordUnlockData,
+}
+
+impl SavedSession {
+    /// Whether this session belongs to the account the user just typed.
+    pub fn matches(&self, server_url: &str, email: &str) -> bool {
+        self.email.eq_ignore_ascii_case(email.trim())
+            && client_settings(Some(server_url)).is_ok_and(|settings| {
+                settings.identity_url == self.identity_url && settings.api_url == self.api_url
+            })
+    }
 }
 
 impl Vault {
     /// Open a client for `server_url`. An empty URL means bitwarden.com.
     pub fn connect(server_url: Option<&str>) -> Result<Self, CoreError> {
-        let settings = client_settings(server_url)?;
+        Self::from_settings(client_settings(server_url)?)
+    }
+
+    fn from_settings(settings: ClientSettings) -> Result<Self, CoreError> {
+        let identity_url = settings.identity_url.clone();
+        let api_url = settings.api_url.clone();
         let client = PasswordManagerClient::new(Some(settings));
 
         // `PasswordManagerClient::new_with_sync` registers its handlers on a
@@ -83,7 +127,117 @@ impl Vault {
             CipherSyncHandler::new(&client.0).map_err(|_| CoreError::Internal)?,
         ));
 
-        Ok(Self { client, sync })
+        Ok(Self {
+            client,
+            sync,
+            identity_url,
+            api_url,
+        })
+    }
+
+    /// Open a saved session with the master password. No sign-in, no second factor.
+    pub async fn restore(saved: &SavedSession, password: &str) -> Result<Self, CoreError> {
+        let vault = Self::from_settings(settings_from_urls(&saved.identity_url, &saved.api_url)?)?;
+
+        vault
+            .client
+            .0
+            .platform()
+            .state()
+            .setting(AUTHENTICATION_TOKENS)
+            .map_err(|_| CoreError::Internal)?
+            .update(saved.tokens.clone())
+            .await
+            .map_err(|_| CoreError::Internal)?;
+
+        vault
+            .client
+            .0
+            .crypto()
+            .initialize_user_crypto(InitUserCryptoRequest {
+                user_id: Some(saved.user_id),
+                kdf_params: saved.unlock.kdf.clone(),
+                email: saved.unlock.salt.clone(),
+                account_cryptographic_state: saved.crypto_state.clone(),
+                method: InitUserCryptoMethod::MasterPasswordUnlock {
+                    password: password.to_string(),
+                    master_password_unlock: saved.unlock.clone(),
+                },
+                upgrade_token: None,
+            })
+            .await
+            .map_err(|_| CoreError::InvalidCredentials)?;
+
+        Ok(vault)
+    }
+
+    /// The state that lets the next start skip the sign-in.
+    pub async fn saved_session(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> Result<SavedSession, CoreError> {
+        let state = self.client.0.platform().state();
+        let tokens = state
+            .setting(AUTHENTICATION_TOKENS)
+            .map_err(|_| CoreError::Internal)?
+            .get()
+            .await
+            .map_err(|_| CoreError::Internal)?
+            .ok_or(CoreError::Internal)?;
+        let crypto_state = {
+            let key_store = self.client.0.internal.get_key_store();
+            let ctx = key_store.context();
+            // The sign-in installed this key from the server's answer; wrapping it
+            // again with the user key gives the state a restore can install.
+            let private_key = ctx
+                .wrap_private_key(SymmetricKeySlotId::User, PrivateKeySlotId::UserPrivateKey)
+                .map_err(|_| CoreError::Internal)?;
+            WrappedAccountCryptographicState::V1 { private_key }
+        };
+        let login_method = state
+            .setting(USER_LOGIN_METHOD)
+            .map_err(|_| CoreError::Internal)?
+            .get()
+            .await
+            .map_err(|_| CoreError::Internal)?
+            .ok_or(CoreError::Internal)?;
+        let UserLoginMethod::Username {
+            email: salt, kdf, ..
+        } = login_method
+        else {
+            return Err(CoreError::Internal);
+        };
+
+        let user_key = self
+            .client
+            .0
+            .crypto()
+            .get_user_encryption_key()
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        let user_key = SymmetricCryptoKey::try_from(user_key).map_err(|_| CoreError::Internal)?;
+        let master_key =
+            MasterKey::derive(password, &salt, &kdf).map_err(|_| CoreError::Internal)?;
+
+        Ok(SavedSession {
+            email: email.trim().to_string(),
+            // A restore needs an id for the SDK's per-user local state, but the
+            // sign-in response carries none and nothing else reads it.
+            user_id: UserId::new_v4(),
+            identity_url: self.identity_url.clone(),
+            api_url: self.api_url.clone(),
+            tokens,
+            crypto_state,
+            unlock: MasterPasswordUnlockData {
+                kdf,
+                salt,
+                master_key_wrapped_user_key: master_key
+                    .encrypt_user_key(&user_key)
+                    .map_err(|_| CoreError::Internal)?,
+                contained_key_id: None,
+            },
+        })
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -417,5 +571,87 @@ mod tests {
             Vault::connect(Some("http://vault.example.com")).err(),
             Some(CoreError::InsecureUrl)
         );
+    }
+
+    const EMAIL: &str = "test@example.com";
+    const PASSWORD: &str = "a master password";
+
+    /// A saved session built the way a real sign-in would build it.
+    fn saved_session() -> SavedSession {
+        use bitwarden_crypto::{PublicKeyEncryptionAlgorithm, SymmetricKeyAlgorithm};
+
+        let store: bitwarden_crypto::KeyStore<bitwarden_core::key_management::KeySlotIds> =
+            bitwarden_crypto::KeyStore::default();
+        let mut ctx = store.context_mut();
+        let user_key_id = ctx.make_symmetric_key(SymmetricKeyAlgorithm::Aes256CbcHmac);
+        let private_key_id = ctx.make_private_key(PublicKeyEncryptionAlgorithm::RsaOaepSha1);
+        let crypto_state = WrappedAccountCryptographicState::V1 {
+            private_key: ctx.wrap_private_key(user_key_id, private_key_id).unwrap(),
+        };
+        #[allow(deprecated)]
+        let user_key = ctx
+            .dangerous_get_symmetric_key(user_key_id)
+            .unwrap()
+            .clone();
+
+        let kdf = bitwarden_crypto::Kdf::PBKDF2 {
+            iterations: std::num::NonZeroU32::new(5000).unwrap(),
+        };
+        let master_key = MasterKey::derive(PASSWORD, EMAIL, &kdf).unwrap();
+
+        SavedSession {
+            email: EMAIL.to_string(),
+            user_id: UserId::new_v4(),
+            identity_url: "https://vault.example.com/identity".to_string(),
+            api_url: "https://vault.example.com/api".to_string(),
+            tokens: AuthenticationTokens {
+                access_token: "access".to_string(),
+                refresh_token: Some("refresh".to_string()),
+                expires_on: 0,
+            },
+            crypto_state,
+            unlock: MasterPasswordUnlockData {
+                kdf,
+                salt: EMAIL.to_string(),
+                master_key_wrapped_user_key: master_key.encrypt_user_key(&user_key).unwrap(),
+                contained_key_id: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn a_saved_session_unlocks_with_the_master_password() {
+        let vault = Vault::restore(&saved_session(), PASSWORD).await.unwrap();
+        assert!(vault.is_unlocked());
+    }
+
+    #[tokio::test]
+    async fn a_wrong_password_leaves_a_saved_session_locked() {
+        assert_eq!(
+            Vault::restore(&saved_session(), "not the password")
+                .await
+                .err(),
+            Some(CoreError::InvalidCredentials)
+        );
+    }
+
+    #[test]
+    fn a_saved_session_belongs_to_one_account_and_server() {
+        let saved = saved_session();
+        assert!(saved.matches("https://vault.example.com", " TEST@example.com "));
+        assert!(!saved.matches("https://vault.example.com", "other@example.com"));
+        assert!(!saved.matches("", EMAIL));
+        assert!(!saved.matches("http://vault.example.com", EMAIL));
+    }
+
+    #[test]
+    fn a_saved_session_survives_a_round_trip() {
+        let saved = saved_session();
+        let text = serde_json::to_string(&saved).unwrap();
+        let read: SavedSession = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(read.email, saved.email);
+        assert_eq!(read.tokens.access_token, saved.tokens.access_token);
+        assert_eq!(read.unlock.salt, saved.unlock.salt);
     }
 }

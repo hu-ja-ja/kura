@@ -11,6 +11,7 @@ mod backend;
 mod clipboard;
 mod detail;
 mod list;
+mod session;
 mod settings;
 
 rust_i18n::i18n!("locales", fallback = "en");
@@ -41,8 +42,10 @@ fn main() {
             .expect("failed to load the bundled fonts");
         Theme::global_mut(cx).font_family = "IBM Plex Sans JP".into();
 
-        let (backend, events) = backend::Backend::spawn(runtime.handle());
+        let saved_session = session::load();
+        let (backend, events) = backend::Backend::spawn(runtime.handle(), saved_session.clone());
         let settings = settings::Settings::load();
+        let saved_email = saved_session.map(|session| session.email);
 
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(900.), px(700.)), cx)),
@@ -55,7 +58,7 @@ fn main() {
         };
 
         gpui_kit::open_window(window_options, cx, |window, cx| {
-            cx.new(|cx| app::Root::new(window, cx, backend, events, settings))
+            cx.new(|cx| app::Root::new(window, cx, backend, events, settings, saved_email))
         })
         .expect("failed to open window");
     });

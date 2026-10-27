@@ -13,13 +13,7 @@ const USER_AGENT: &str = concat!("Kura/", env!("CARGO_PKG_VERSION"));
 
 /// Build the SDK settings for `server_url`. An empty URL means bitwarden.com.
 pub fn client_settings(server_url: Option<&str>) -> Result<ClientSettings, CoreError> {
-    let mut settings = ClientSettings {
-        user_agent: USER_AGENT.to_string(),
-        // The server rejects requests without this header since 2026.
-        bitwarden_client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        device_type: DeviceType::WindowsDesktop,
-        ..Default::default()
-    };
+    let mut settings = base_settings();
 
     let raw = server_url.unwrap_or_default().trim();
     if raw.is_empty() {
@@ -70,6 +64,34 @@ pub fn client_settings(server_url: Option<&str>) -> Result<ClientSettings, CoreE
     settings.identity_url = format!("{base}/identity");
     settings.api_url = format!("{base}/api");
     Ok(settings)
+}
+
+/// Rebuild the settings from the endpoints of a saved session. The URLs come
+/// from a file Kura wrote, so they are checked again rather than trusted.
+pub fn settings_from_urls(identity_url: &str, api_url: &str) -> Result<ClientSettings, CoreError> {
+    for url in [identity_url, api_url] {
+        match Url::parse(url) {
+            Ok(url) if url.scheme() == "https" => {}
+            Ok(_) => return Err(CoreError::InsecureUrl),
+            Err(_) => return Err(CoreError::InvalidUrl),
+        }
+    }
+
+    Ok(ClientSettings {
+        identity_url: identity_url.to_string(),
+        api_url: api_url.to_string(),
+        ..base_settings()
+    })
+}
+
+fn base_settings() -> ClientSettings {
+    ClientSettings {
+        user_agent: USER_AGENT.to_string(),
+        // The server rejects requests without this header since 2026.
+        bitwarden_client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        device_type: DeviceType::WindowsDesktop,
+        ..Default::default()
+    }
 }
 
 /// Accept a URL that already points at one of the endpoints.
