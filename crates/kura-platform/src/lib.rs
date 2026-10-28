@@ -122,6 +122,11 @@ pub fn show_window(hwnd: isize) {
     windows::show_window(hwnd);
 }
 
+/// Give a window the icon the taskbar and Alt+Tab show.
+pub fn set_window_icon(hwnd: isize) {
+    windows::set_window_icon(hwnd);
+}
+
 /// Release resident pages while the app sits in the tray.
 pub fn trim_working_set() {
     windows::trim_working_set();

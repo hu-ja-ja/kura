@@ -177,6 +177,9 @@ impl Controller {
             .update(cx, |_, window, _| window_hwnd(window))
             .ok()
             .flatten();
+        if let Some(hwnd) = self.hwnd {
+            kura_platform::set_window_icon(hwnd);
+        }
         self.window = Some((handle, root.downgrade()));
     }
 

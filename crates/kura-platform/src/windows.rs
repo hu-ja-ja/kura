@@ -36,18 +36,22 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, FindWindowW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW,
-    IDI_APPLICATION, IsIconic, KillTimer, LoadIconW, MF_STRING, MSG, PBT_APMSUSPEND, PostMessageW,
-    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SW_HIDE, SW_RESTORE, SW_SHOW,
-    SetForegroundWindow, SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW, ShowWindowAsync,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WDA_EXCLUDEFROMCAPTURE,
-    WDA_NONE, WM_APP, WM_CLOSE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL,
-    WM_POWERBROADCAST, WM_RBUTTONUP, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW, WTS_SESSION_LOCK,
+    DispatchMessageW, FindWindowW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetSystemMetrics,
+    GetWindowLongPtrW, ICON_BIG, ICON_SMALL, IMAGE_ICON, IsIconic, KillTimer, LR_DEFAULTCOLOR,
+    LR_SHARED, LoadImageW, MF_STRING, MSG, PBT_APMSUSPEND, PostMessageW, PostQuitMessage,
+    RegisterClassW, RegisterWindowMessageW, SM_CXICON, SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW,
+    SendMessageW, SetForegroundWindow, SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW,
+    ShowWindowAsync, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_APP, WM_CLOSE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
+    WM_NULL, WM_POWERBROADCAST, WM_RBUTTONUP, WM_SETICON, WM_TIMER, WM_WTSSESSION_CHANGE,
+    WNDCLASSW, WTS_SESSION_LOCK,
 };
 
 use crate::{Event, Labels, StartError, WINDOW_CLASS};
 
 const TRAY_ICON_ID: u32 = 1;
+/// The kura.ico resource compiled into the executable by kura-app's build script.
+const ICON_RESOURCE: u32 = 1;
 const SHOW_MESSAGE: u32 = WM_APP + 1;
 const SHOW_WINDOW_MESSAGE: u32 = WM_APP + 2;
 const IDLE_TIMER_ID: usize = 1;
@@ -159,7 +163,8 @@ unsafe fn create(
         return Err(last_error("CreateWindowExW"));
     }
 
-    let icon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+    let size = GetSystemMetrics(SM_CXSMICON);
+    let icon = load_icon(size);
     let state = Box::new(State {
         events,
         labels,
@@ -285,6 +290,38 @@ unsafe fn add_icon(hwnd: HWND, icon: isize) {
     set_wide(&mut data.szTip, "Kura");
     if Shell_NotifyIconW(NIM_ADD, &data) == 0 {
         log::warn!("the tray icon could not be added");
+    }
+}
+
+/// Load the icon from the executable's resources. `LR_SHARED` keeps Windows from
+/// handing out a new copy every time the window is recreated; the handle is not
+/// ours to destroy.
+unsafe fn load_icon(size: i32) -> HANDLE {
+    let instance = GetModuleHandleW(std::ptr::null());
+    LoadImageW(
+        instance,
+        ICON_RESOURCE as usize as *const u16,
+        IMAGE_ICON,
+        size,
+        size,
+        LR_DEFAULTCOLOR | LR_SHARED,
+    )
+}
+
+/// Give a window the icon the taskbar and Alt+Tab show.
+pub fn set_window_icon(hwnd: isize) {
+    unsafe {
+        for (slot, size) in [
+            (ICON_BIG, GetSystemMetrics(SM_CXICON)),
+            (ICON_SMALL, GetSystemMetrics(SM_CXSMICON)),
+        ] {
+            let icon = load_icon(size);
+            if icon.is_null() {
+                log::warn!("the window icon could not be loaded");
+                continue;
+            }
+            SendMessageW(hwnd as HWND, WM_SETICON, slot as WPARAM, icon as LPARAM);
+        }
     }
 }
 
