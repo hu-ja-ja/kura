@@ -1,6 +1,6 @@
 [tools]
 rust = { version = "1.97.1-x86_64-pc-windows-gnu", mr_boxington = true }
-mr-boxington = "1.28.0"
+mr-boxington = "v1.29.2"
 
 [env]
 GPUI_FXC_PATH = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe'

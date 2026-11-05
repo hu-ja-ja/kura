@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 clipboard-win = { version = "5", features = ["std"] }
-gpui-kit = "0.8"
+gpui-kit = "0.9"
 kura-core = { path = "../kura-core" }
 kura-platform = { path = "../kura-platform" }
 log = "0.4"
