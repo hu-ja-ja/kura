@@ -2,10 +2,40 @@
 
 lockfile_version = 3
 
-[[tools."cargo:cargo-audit"]]
+[[tools."aqua:rustsec/rustsec/cargo-audit"]]
 version = "0.22.2"
-backend = "cargo:cargo-audit"
+backend = "aqua:rustsec/rustsec/cargo-audit"
 specifiers = ["0.22.2"]
+
+[tools."aqua:rustsec/rustsec/cargo-audit"."platforms.linux-arm64"]
+checksum = "sha256:c6603814ddaa45e51263dafd31c0ac98808f688d26f7395804f9670b0fd599dd"
+url = "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-aarch64-unknown-linux-gnu-v0.22.2.tgz"
+url_api = "https://api.github.com/repos/rustsec/rustsec/releases/assets/439292355"
+
+[tools."aqua:rustsec/rustsec/cargo-audit"."platforms.linux-arm64-musl"]
+checksum = "sha256:c6603814ddaa45e51263dafd31c0ac98808f688d26f7395804f9670b0fd599dd"
+url = "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-aarch64-unknown-linux-gnu-v0.22.2.tgz"
+url_api = "https://api.github.com/repos/rustsec/rustsec/releases/assets/439292355"
+
+[tools."aqua:rustsec/rustsec/cargo-audit"."platforms.linux-x64"]
+checksum = "sha256:ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39"
+url = "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-x86_64-unknown-linux-gnu-v0.22.2.tgz"
+url_api = "https://api.github.com/repos/rustsec/rustsec/releases/assets/439291614"
+
+[tools."aqua:rustsec/rustsec/cargo-audit"."platforms.linux-x64-musl"]
+checksum = "sha256:7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428"
+url = "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-x86_64-unknown-linux-musl-v0.22.2.tgz"
+url_api = "https://api.github.com/repos/rustsec/rustsec/releases/assets/439292222"
+
+[tools."aqua:rustsec/rustsec/cargo-audit"."platforms.macos-arm64"]
+checksum = "sha256:847831323de932155b226ab60ee4a180e13e5d007a019f0d4b7b4d89a6de2ab2"
+url = "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-x86_64-apple-darwin-v0.22.2.tgz"
+url_api = "https://api.github.com/repos/rustsec/rustsec/releases/assets/439292734"
+
+[tools."aqua:rustsec/rustsec/cargo-audit"."platforms.windows-x64"]
+checksum = "sha256:0a7316540862c13d954f648917ceacca593747baed6eec180fafa590be2710ab"
+url = "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-x86_64-pc-windows-msvc-v0.22.2.zip"
+url_api = "https://api.github.com/repos/rustsec/rustsec/releases/assets/439294720"
 
 [[tools.communique]]
 version = "1.8.0"
@@ -218,6 +248,9 @@ url = "https://nodejs.org/dist/v26.12.1/node-v26.12.1-win-x64.zip"
 version = "1.97.1-x86_64-pc-windows-gnu"
 backend = "core:rust"
 specifiers = ["1.97.1-x86_64-pc-windows-gnu"]
+
+[tools.rust.options]
+components = "clippy,rustfmt"
 
 [[tools.shellcheck]]
 version = "0.11.0"
