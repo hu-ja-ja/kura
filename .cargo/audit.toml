@@ -1,0 +1,15 @@
+# cargo-audit configuration.
+#
+# The two entries below are upstream SDK dependencies. They are ignored with a
+# reason and the reachability recorded here, not because the audit is allowed
+# to fail silently. Review them when the pinned SDK revision changes.
+[advisories]
+ignore = [
+    # rsa 0.10.0-rc.19 has no fixed release for the Marvin attack. Kura is a
+    # local client: a server can choose RSA ciphertexts, but it cannot observe
+    # the local decryption timing. Revisit when bitwarden-crypto updates rsa.
+    "RUSTSEC-2023-0071",
+    # crypto-bigint 0.5.5 comes in through p256/passkey-rs for FIDO2. Kura has
+    # no passkey UI or credential flow. Revisit when the SDK updates passkey-rs.
+    "RUSTSEC-2026-0387",
+]

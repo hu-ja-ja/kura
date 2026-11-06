@@ -1,0 +1,330 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# Releases share one Pages site and one "latest" flag, so serialize them.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Resolve the version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # read the CI run for the tagged commit
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name }}
+      - name: Resolve one version
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="$TAG"
+          if [[ "$tag" != v* ]]; then
+            echo "::error::release tags must start with v"
+            exit 1
+          fi
+          version="${tag#v}"
+          file_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "$version" != "$file_version" ]; then
+            echo "::error::tag $tag does not match Cargo.toml version $file_version"
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::only stable x.y.z releases are supported"
+            exit 1
+          fi
+          blocked="$(gh release view "$tag" --json isDraft,isPrerelease --jq '.isDraft or .isPrerelease')"
+          if [ "$blocked" != "false" ]; then
+            echo "::error::release $tag must be published and not a pre-release"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Require a green CI run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          found=0
+          for attempt in $(seq 1 24); do
+            run="$(gh run list --workflow ci.yml --branch main --commit "$SHA" --limit 1 --json status,conclusion,url --jq '.[0] // empty')"
+            if [ -z "$run" ]; then
+              echo "CI run for $SHA is not visible yet; waiting (attempt $attempt/24)"
+              sleep 10
+              continue
+            fi
+            found=1
+            status="$(jq -r .status <<<"$run")"
+            if [ "$status" = "completed" ]; then
+              conclusion="$(jq -r .conclusion <<<"$run")"
+              if [ "$conclusion" != "success" ]; then
+                echo "::error::CI for $SHA finished with $conclusion: $(jq -r .url <<<"$run")"
+                exit 1
+              fi
+              echo "CI passed for $SHA: $(jq -r .url <<<"$run")"
+              exit 0
+            fi
+            echo "CI is $status; waiting (attempt $attempt/24)"
+            sleep 10
+          done
+          if [ "$found" = "0" ]; then
+            echo "::error::no CI run found for $SHA on main; push it and let CI finish before publishing"
+          else
+            echo "::error::CI for $SHA did not finish; wait for it and re-run the release"
+          fi
+          exit 1
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          cache: false
+          install_args: node
+      - name: Check the changelog
+        shell: bash
+        run: node packaging/changelog.ts "${{ steps.resolve.outputs.version }}" --check
+
+  build:
+    name: Build the installer
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write # OIDC for the Infisical machine identity that hands out the public key
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name }}
+      - uses: Infisical/secrets-action@v1.0.18
+        with:
+          method: oidc
+          identity-id: 00171ed1-7b7e-42e4-b548-8a6ca596cfaf
+          project-slug: kura-gd-y8
+          env-slug: prod
+          secret-name: ED25519_PUBLIC_KEY
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          cache: false
+      # A release event never writes the mbx cache, so a cache action here
+      # would only add a miss. The build stays cold until a release seed exists.
+      - name: Install Inno Setup
+        shell: pwsh
+        run: mise run install-inno
+      - name: Build and package
+        shell: pwsh
+        run: mise run package
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-dist
+          path: |
+            dist/Kura-*-setup.exe
+            dist/Kura-*-setup.exe.sha256
+          if-no-files-found: error
+
+  tools:
+    name: Build the release tool
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name }}
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          cache: false
+          install_args: rust
+        env:
+          MISE_RUST_VERSION: "1.97.1"
+      # This job never sees a secret. The tool is built here so the jobs that
+      # hold the signing key run no build scripts from third-party crates.
+      - name: Build kura-dist
+        shell: bash
+        run: cargo build --release --locked -p kura-dist
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-tool
+          path: target/release/kura-dist
+          if-no-files-found: error
+
+  publish:
+    name: Attach the installer and sign the manifest
+    needs: [version, build, tools]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # upload the installer to the published release
+      id-token: write # OIDC for the Infisical machine identity
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: windows-dist
+          path: dist
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-tool
+          path: ${{ runner.temp }}/release-tool
+      - name: Put the release tool on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/release-tool/kura-dist"
+          echo "$RUNNER_TEMP/release-tool" >> "$GITHUB_PATH"
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          cache: false
+          install_args: node
+      - name: Read the published release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          body="$(gh release view "$TAG" --json body --jq '.body')"
+          if [ -z "$body" ]; then
+            node packaging/changelog.ts "$VERSION" "$RUNNER_TEMP/release-notes.md"
+          else
+            printf '%s\n' "$body" > "$RUNNER_TEMP/release-notes.md"
+          fi
+      - uses: Infisical/secrets-action@v1.0.18
+        with:
+          method: oidc
+          identity-id: 00171ed1-7b7e-42e4-b548-8a6ca596cfaf
+          project-slug: kura-gd-y8
+          env-slug: prod
+          secret-name: ED25519_PUBLIC_KEY
+      - uses: Infisical/secrets-action@v1.0.18
+        with:
+          method: oidc
+          identity-id: 00171ed1-7b7e-42e4-b548-8a6ca596cfaf
+          project-slug: kura-gd-y8
+          env-slug: prod
+          secret-name: ED25519_PRIVATE_KEY
+      - name: Sign the manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          kura-dist sign \
+            --artifact "dist/Kura-$VERSION-setup.exe" \
+            --url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --output site/manifest.json
+      - name: Attach the installer to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            "dist/Kura-$VERSION-setup.exe" \
+            "dist/Kura-$VERSION-setup.exe.sha256" \
+            --clobber
+      # The app downloads this URL without a token. A private repository or a
+      # stale URL fails here instead of on a user's machine.
+      - name: Check the installer URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(jq -r '.url' site/manifest.json)"
+          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+            --head "$url" > /dev/null
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: site
+          path: site
+          if-no-files-found: error
+
+  pages:
+    name: Deploy the manifest to GitHub Pages
+    needs: [version, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # mark the release latest once the live manifest verifies
+      pages: write # publish the manifest to GitHub Pages
+      id-token: write # OIDC for GitHub Pages and for the public key
+    environment:
+      name: github-pages
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.event.release.tag_name }}
+      FEED_URL: https://hu-ja-ja.github.io/kura/manifest.json
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: site
+          path: site
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-tool
+          path: ${{ runner.temp }}/release-tool
+      - name: Put the release tool on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/release-tool/kura-dist"
+          echo "$RUNNER_TEMP/release-tool" >> "$GITHUB_PATH"
+      - uses: actions/configure-pages@v6.0.0
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: site
+      - uses: actions/deploy-pages@v5.0.1
+      - uses: Infisical/secrets-action@v1.0.18
+        with:
+          method: oidc
+          # The Pages job runs in the github-pages environment, so its OIDC
+          # subject is repo:hu-ja-ja/kura:environment:github-pages rather than
+          # the tag subject the build and publish jobs use.
+          identity-id: 1c3b8bd4-3a5e-4166-83c2-495bd2c43534
+          project-slug: kura-gd-y8
+          env-slug: prod
+          secret-name: ED25519_PUBLIC_KEY
+      - name: Verify the live manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            if kura-dist verify \
+              --feed "$FEED_URL" \
+              --public-key "$ED25519_PUBLIC_KEY" \
+              --expect-version "$VERSION"; then
+              exit 0
+            fi
+            echo "::warning::the live manifest did not verify yet (attempt $attempt)"
+            if [ "$attempt" -lt 10 ]; then
+              sleep 30
+            fi
+          done
+          echo "::error::the published manifest did not verify"
+          exit 1
+      - name: Mark the release latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --latest

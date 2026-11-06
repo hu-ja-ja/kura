@@ -1,0 +1,26 @@
+[package]
+name = "kura-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1"
+bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "365fb983883370bfd2f6c3f3f51759634c7bf7b0" }
+bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "365fb983883370bfd2f6c3f3f51759634c7bf7b0" }
+bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "365fb983883370bfd2f6c3f3f51759634c7bf7b0" }
+bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "365fb983883370bfd2f6c3f3f51759634c7bf7b0" }
+bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "365fb983883370bfd2f6c3f3f51759634c7bf7b0" }
+bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "365fb983883370bfd2f6c3f3f51759634c7bf7b0" }
+bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "365fb983883370bfd2f6c3f3f51759634c7bf7b0" }
+# Turns on the operating system proxy for the HTTP clients the SDK builds.
+reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+url = "2"
+zeroize = "1"

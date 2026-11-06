@@ -1,0 +1,23 @@
+# License policy for `mise run licenses`. Regenerate `crates/kura-app/assets/licenses.txt`
+# after changing dependencies and commit the result.
+accepted = [
+  "Apache-2.0",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "Unlicense",
+  "CC0-1.0",
+  "0BSD",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  # The workspace crates, and the Bitwarden SDK's
+  # "GPL-3.0-only OR LicenseRef-Bitwarden-SDK".
+  "GPL-3.0-only",
+]
+targets = ["x86_64-pc-windows-gnu"]
+ignore-dev-dependencies = true
+workarounds = ["ring", "rustls"]

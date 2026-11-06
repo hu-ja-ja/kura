@@ -1,0 +1,7 @@
+/target
+/dist
+.env
+*.pdb
+*.log
+
+/要件

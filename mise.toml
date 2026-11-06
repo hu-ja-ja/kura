@@ -1,0 +1,77 @@
+[tools]
+rust = { version = "1.97.1-x86_64-pc-windows-gnu", mr_boxington = true }
+mr-boxington = "1.29.2"
+node = "26.12.1"
+infisical = "0.44.10"
+shellcheck = "0.11.0"
+jactionlint = "2.5.0"
+communique = { version = "1.8.0", workflow = "release.yml@refs/heads/main" }
+"cargo:cargo-audit" = "0.22.2"
+
+[tools."http:inno-setup"]
+version = "7.1.0"
+url = "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe"
+checksum = "sha256:0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f"
+bin = "inno-setup"
+
+[tasks.run]
+description = "Run the app"
+run = "cargo run -p kura-app"
+
+[tasks.check]
+description = "Type-check the workspace"
+run = "cargo check --workspace --all-targets"
+
+[tasks.fmt]
+description = "Format the workspace"
+run = "cargo fmt --all"
+
+[tasks.lint]
+description = "Format check and lints"
+run = "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.audit]
+description = "Audit dependencies for known vulnerabilities"
+run = "cargo audit"
+
+[tasks."test:packaging"]
+description = "Test the release notes extractor"
+run = "node --test packaging/changelog.test.ts"
+
+[tasks.release]
+description = "Create a draft release"
+run = "pwsh -NoProfile -File scripts/release.ps1"
+
+[tasks.build]
+description = "Release build"
+run = "cargo build --release --locked -p kura-app"
+
+[tasks.install-inno]
+description = "Install Inno Setup silently (CI)"
+run = "inno-setup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"
+
+# The release build is a dependency instead of work left to kura-dist: cargo
+# spawned from a `cargo run` target is not wrapped by mbx, so it never caches.
+[tasks.package]
+description = "Build and package the Inno Setup installer"
+depends = ["build"]
+run = "cargo run -p kura-dist -- package --skip-build"
+
+[tasks.dist]
+description = "Run the release tool (sign, verify, package)"
+run = "cargo run -p kura-dist --"
+
+[tasks.package-dev]
+description = "Package with Infisical dev secrets"
+depends = ["build"]
+run = "infisical run --env=dev -- cargo run -p kura-dist -- package --skip-build"
+
+[tasks.package-prod]
+description = "Package with Infisical prod secrets"
+depends = ["build"]
+run = "infisical run --env=prod -- cargo run -p kura-dist -- package --skip-build"
+
+[tasks.licenses]
+description = "Regenerate the bundled third-party license list"
+run = "cargo about generate about.hbs -o crates/kura-app/assets/licenses.txt"
+

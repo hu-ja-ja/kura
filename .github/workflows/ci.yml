@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Build and test
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5.2.6
+      - uses: jdx/mr-boxington-action@v1.7.3
+        with:
+          # Per-job keys: sharing one key would let whichever job saves last
+          # hand a target tree without this job's artifacts to the next run.
+          cache-key: mbx-check-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: mbx-check-${{ runner.os }}-${{ runner.arch }}-
+      - name: Format and lint
+        shell: pwsh
+        run: mise run lint
+      - name: Test
+        shell: pwsh
+        run: cargo test --workspace
+      - name: Audit dependencies
+        shell: pwsh
+        run: mise run audit
+      - name: Test the changelog extractor
+        shell: pwsh
+        run: mise run test:packaging
+
+  package:
+    name: Package the installer
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5.2.6
+      - uses: jdx/mr-boxington-action@v1.7.3
+        with:
+          cache-key: mbx-package-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: mbx-package-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install Inno Setup
+        shell: pwsh
+        run: mise run install-inno
+      - name: Package the installer
+        shell: pwsh
+        env:
+          ED25519_PUBLIC_KEY: ci-placeholder
+        run: mise run package
+
+  actions:
+    name: Lint the workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify the action lockfile
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh extension install github/gh-actions-lock --force --pin v0.4.1
+          gh actions-lock --verify
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          install_args: "shellcheck jactionlint"
+      - name: Lint the workflows
+        shell: bash
+        run: jactionlint

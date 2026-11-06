@@ -1,0 +1,576 @@
+_version: 2
+
+common:
+  back:
+    en: "Back"
+    ja: "戻る"
+  retry:
+    en: "Retry"
+    ja: "再試行"
+  cancel:
+    en: "Cancel"
+    ja: "キャンセル"
+
+tray:
+  show:
+    en: "Show Kura"
+    ja: "Kuraを表示"
+  check_updates:
+    en: "Check for Updates..."
+    ja: "アップデートを確認..."
+  lock:
+    en: "Lock"
+    ja: "ロック"
+  quit:
+    en: "Quit"
+    ja: "終了"
+
+update:
+  title:
+    en: "Kura Update"
+    ja: "Kuraのアップデート"
+  title_available:
+    en: "Update Available"
+    ja: "アップデートがあります"
+  title_ready:
+    en: "Ready to Update"
+    ja: "再起動で更新"
+  title_checking:
+    en: "Checking for Updates"
+    ja: "アップデートを確認中"
+  current:
+    en: "Current version %{version}"
+    ja: "現在のバージョン %{version}"
+  idle:
+    en: "Check for a newer version of Kura."
+    ja: "Kuraの新しいバージョンを確認します。"
+  checking:
+    en: "Checking for updates..."
+    ja: "アップデートを確認しています..."
+  up_to_date:
+    en: "Kura %{version} is up to date."
+    ja: "Kura %{version} は最新です。"
+  version_change:
+    en: "%{current} -> %{version}"
+    ja: "%{current} → %{version}"
+  release_notes:
+    en: "Release notes"
+    ja: "リリースノート"
+  auto_install:
+    en: "Download and install updates automatically in the future"
+    ja: "今後は自動でダウンロードしてインストール"
+  skip:
+    en: "Skip this version"
+    ja: "このバージョンをスキップ"
+  later:
+    en: "Later"
+    ja: "後で"
+  install:
+    en: "Install Update"
+    ja: "インストール"
+  restart:
+    en: "Restart to Update"
+    ja: "今すぐ再起動"
+  check:
+    en: "Check for Updates"
+    ja: "更新を確認"
+  downloading:
+    en: "Downloading version %{version}..."
+    ja: "バージョン %{version} をダウンロードしています..."
+  staged:
+    en: "Version %{version} is ready to install."
+    ja: "バージョン %{version} をインストールする準備ができました。"
+  staged_hint:
+    en: "Restart now, or the update will run when Kura quits."
+    ja: "今すぐ再起動するか、Kuraの終了時に更新します。"
+  failed:
+    en: "The update failed."
+    ja: "アップデートに失敗しました。"
+  disabled:
+    en: "This build cannot update itself. Install a release build of Kura."
+    ja: "このビルドでは更新できません。配布版のKuraをインストールしてください。"
+  cannot_check:
+    en: "This build cannot check for updates. Install a release build of Kura."
+    ja: "このビルドでは更新を確認できません。配布版のKuraをインストールしてください。"
+  unavailable:
+    en: "Updates are unavailable in this build."
+    ja: "このビルドでは更新を利用できません。"
+  error_manifest:
+    en: "The update information could not be read."
+    ja: "更新情報を読み取れませんでした。"
+  error_download:
+    en: "The update could not be downloaded."
+    ja: "更新をダウンロードできませんでした。"
+  error_verify:
+    en: "The update did not verify. Nothing was installed."
+    ja: "更新を検証できませんでした。何もインストールしていません。"
+  error_configuration:
+    en: "The updater is not configured correctly."
+    ja: "アップデートの設定が正しくありません。"
+  error_installer:
+    en: "The update installer could not be started."
+    ja: "更新のインストーラを起動できませんでした。"
+
+settings:
+  open:
+    en: "Settings"
+    ja: "設定"
+  title:
+    en: "Settings"
+    ja: "設定"
+  section_server:
+    en: "Server"
+    ja: "サーバー"
+  section_account:
+    en: "Account"
+    ja: "アカウント"
+  section_security:
+    en: "Security"
+    ja: "セキュリティ"
+  section_appearance:
+    en: "Appearance"
+    ja: "外観"
+  section_startup:
+    en: "Startup and tray"
+    ja: "起動とトレイ"
+  server_url:
+    en: "Server URL"
+    ja: "サーバーURL"
+  server_url_hint:
+    en: "Used by the next sign-in. Empty means bitwarden.com."
+    ja: "次回のログインで使います。空なら bitwarden.com です。"
+  confirmed_server_hint:
+    en: "The master password goes here without asking."
+    ja: "マスターパスワードを確認なしで送信します。"
+  forget_server:
+    en: "Take back the approval"
+    ja: "承認を取り消す"
+  saved_login:
+    en: "Saved login"
+    ja: "保存ログイン"
+  saved_login_hint:
+    en: "Sealed to this Windows user with DPAPI. The vault stays on the server."
+    ja: "このWindowsユーザーにDPAPIで封印されています。保管庫はサーバーに残ります。"
+  forget_login:
+    en: "Forget the saved login"
+    ja: "保存ログインを消す"
+  forget_login_title:
+    en: "Forget the saved login?"
+    ja: "保存ログインを消しますか?"
+  forget_login_body:
+    en: "The next start needs your email and master password, and a two-step code if your account uses one."
+    ja: "次回はメールアドレスとマスターパスワード、必要なら二段階認証コードが必要です。"
+  forget_login_reset:
+    en: "Also reset the settings to defaults"
+    ja: "設定も初期値に戻す"
+  forget_login_confirm:
+    en: "Forget"
+    ja: "消す"
+  saved_login_removed:
+    en: "The saved login was removed."
+    ja: "保存ログインを消しました。"
+  saved_login_remove_failed:
+    en: "The saved login could not be removed. Check the log."
+    ja: "保存ログインを消せませんでした。ログを確認してください。"
+  auto_lock:
+    en: "Auto-lock"
+    ja: "自動ロック"
+  auto_lock_hint:
+    en: "Lock after this long without using Kura."
+    ja: "Kuraを操作しないままこの時間が経つとロックします。"
+  minutes:
+    en: "%{minutes} min"
+    ja: "%{minutes}分"
+  clipboard:
+    en: "Clear clipboard"
+    ja: "クリップボードを消す"
+  clipboard_hint:
+    en: "Wipe a copied secret after this long."
+    ja: "コピーした秘密情報をこの時間後に消します。"
+  seconds:
+    en: "%{seconds} sec"
+    ja: "%{seconds}秒"
+  theme:
+    en: "Theme"
+    ja: "テーマ"
+  theme_system:
+    en: "System"
+    ja: "システム"
+  theme_light:
+    en: "Light"
+    ja: "ライト"
+  theme_dark:
+    en: "Dark"
+    ja: "ダーク"
+  language:
+    en: "Language"
+    ja: "言語"
+  autostart:
+    en: "Start with Windows"
+    ja: "Windows起動時に自動起動"
+  autostart_hint:
+    en: "Add Kura to the current user's startup entry."
+    ja: "現在のユーザーのスタートアップに登録します。"
+  start_in_tray:
+    en: "Start in the tray"
+    ja: "起動時にトレイへ格納"
+  destroy_on_hide:
+    en: "Free memory while in the tray"
+    ja: "トレイ格納時にメモリを解放"
+  destroy_on_hide_hint:
+    en: "On destroys the window to free memory; the app stays in the tray and reopening takes a moment. Off keeps the window hidden so it reopens faster."
+    ja: "オンはウィンドウを破棄してメモリを減らします。アプリはトレイに残り、再表示には少し時間がかかります。オフはウィンドウを保持して、再表示を速くします。"
+  capture:
+    en: "Screen capture protection"
+    ja: "スクリーンショット保護"
+  capture_hint:
+    en: "Keep the window out of captures and screen sharing."
+    ja: "画面キャプチャと画面共有に写らないようにします。"
+  save_failed:
+    en: "The settings could not be saved."
+    ja: "設定を保存できませんでした。"
+  autostart_failed:
+    en: "The startup entry could not be changed."
+    ja: "自動起動を変更できませんでした。"
+  capture_failed:
+    en: "Screen capture protection could not be changed."
+    ja: "スクリーンショット保護を変更できませんでした。"
+  capture_unavailable:
+    en: "Not available in this environment."
+    ja: "この環境では利用できません。"
+  updates:
+    en: "Updates"
+    ja: "アップデート"
+  update_version:
+    en: "Current version %{version}"
+    ja: "現在のバージョン %{version}"
+  update_check_now:
+    en: "Check now"
+    ja: "今すぐ確認"
+  update_auto_check:
+    en: "Check automatically"
+    ja: "自動的に確認する"
+  update_auto_install:
+    en: "Download and install automatically"
+    ja: "自動でダウンロードしてインストール"
+  update_settings_hint:
+    en: "Automatic checks run at most once a day."
+    ja: "自動確認は1日1回までです。"
+  licenses:
+    en: "Licenses"
+    ja: "ライセンス"
+  licenses_hint:
+    en: "The licenses of the libraries Kura is built with."
+    ja: "Kura が使っているライブラリのライセンスです。"
+  licenses_show:
+    en: "Show"
+    ja: "表示"
+  section_troubleshooting:
+    en: "Troubleshooting"
+    ja: "トラブルシューティング"
+  logs_hint:
+    en: "Logs are kept in %{folder}."
+    ja: "%{folder} にログがあります。"
+  logs_unavailable:
+    en: "The log folder is unavailable on this system."
+    ja: "この環境ではログフォルダを利用できません。"
+  logs_open:
+    en: "Open log folder"
+    ja: "ログフォルダを開く"
+
+filter:
+  all:
+    en: "All"
+    ja: "すべて"
+  favorites:
+    en: "Favorites"
+    ja: "お気に入り"
+  folder:
+    en: "Folder"
+    ja: "フォルダ"
+  all_folders:
+    en: "All folders"
+    ja: "すべてのフォルダ"
+
+login:
+  title:
+    en: "Sign in"
+    ja: "ログイン"
+  subtitle:
+    en: "Unlock your vault with your master password."
+    ja: "マスターパスワードで保管庫を開きます。"
+  server_url:
+    en: "Server URL (optional)"
+    ja: "サーバーURL（省略可）"
+  self_hosted:
+    en: "Self-hosted"
+    ja: "セルフホスト"
+  accessing:
+    en: "Accessing %{server}"
+    ja: "アクセス中 %{server}"
+  master_password_goes_to:
+    en: "The master password goes to %{server}."
+    ja: "マスターパスワードの送信先は %{server} です。"
+  sign_in_to:
+    en: "Sign in to %{server}"
+    ja: "%{server} にログイン"
+  email:
+    en: "Email"
+    ja: "メールアドレス"
+  password:
+    en: "Master password"
+    ja: "マスターパスワード"
+  show_password:
+    en: "Show password"
+    ja: "パスワードを表示"
+  hide_password:
+    en: "Hide password"
+    ja: "パスワードを隠す"
+  submit:
+    en: "Sign in"
+    ja: "ログイン"
+
+two_factor:
+  title:
+    en: "Two-step login"
+    ja: "二段階認証"
+  description:
+    en: "Enter the code from your authenticator app."
+    ja: "認証アプリのコードを入力してください。"
+  method:
+    authenticator:
+      en: "Authenticator app"
+      ja: "認証アプリ"
+    email:
+      en: "Email code"
+      ja: "メール"
+  sent_to:
+    en: "The code is sent to %{address}."
+    ja: "コードは %{address} に送信されます。"
+  send_email:
+    en: "Send code by email"
+    ja: "メールでコードを送る"
+  email_sent:
+    en: "The code was sent. Check your inbox."
+    ja: "コードを送信しました。受信箱を確認してください。"
+  verify:
+    en: "Verify"
+    ja: "確認"
+
+vault:
+  search:
+    en: "Search name, username or URL"
+    ja: "名前・ユーザー名・URLで検索"
+  clear_search:
+    en: "Clear search"
+    ja: "検索を消す"
+  sync:
+    en: "Sync"
+    ja: "同期"
+  lock:
+    en: "Lock"
+    ja: "ロック"
+  lock_hint:
+    en: "Lock and drop the decrypted vault (Ctrl+L)"
+    ja: "ロックして復号済みデータを破棄（Ctrl+L）"
+  copy_username:
+    en: "Copy username"
+    ja: "ユーザー名をコピー"
+  copy_password:
+    en: "Copy password"
+    ja: "パスワードをコピー"
+  item_count:
+    en: "%{count} items"
+    ja: "%{count} 件"
+  empty:
+    en: "This vault is empty."
+    ja: "保管庫は空です。"
+  empty_hint:
+    en: "Sync to fetch your items."
+    ja: "同期して項目を取得してください。"
+  no_results:
+    en: "Nothing matches."
+    ja: "条件に合う項目がありません。"
+  no_results_hint:
+    en: "Change the search or the filter."
+    ja: "検索語か絞り込みを変えてください。"
+  decrypt_failures:
+    en: "%{count} items could not be read."
+    ja: "%{count} 件を読み取れませんでした。"
+
+detail:
+  empty:
+    en: "Select an item."
+    ja: "項目を選択してください。"
+  empty_hint:
+    en: "Its details open here."
+    ja: "ここに詳細が表示されます。"
+  loading:
+    en: "Opening..."
+    ja: "読み込み中..."
+  loading_hint:
+    en: "Decrypting the item."
+    ja: "項目を復号しています。"
+  close:
+    en: "Close"
+    ja: "閉じる"
+  copied:
+    en: "Copied. The clipboard clears in %{seconds} seconds."
+    ja: "コピーしました。%{seconds}秒後にクリップボードを消去します。"
+  copy_failed:
+    en: "The value could not be copied to the clipboard."
+    ja: "クリップボードにコピーできませんでした。"
+  copy:
+    en: "Copy"
+    ja: "コピー"
+  reveal:
+    en: "Show value"
+    ja: "値を表示"
+  hide:
+    en: "Hide value"
+    ja: "値を隠す"
+  open:
+    en: "Open in browser"
+    ja: "ブラウザで開く"
+  username:
+    en: "Username"
+    ja: "ユーザー名"
+  password:
+    en: "Password"
+    ja: "パスワード"
+  uri:
+    en: "URL"
+    ja: "URL"
+  totp:
+    en: "One-time code"
+    ja: "ワンタイムコード"
+  totp_remaining:
+    en: "%{seconds}s left"
+    ja: "残り %{seconds} 秒"
+  cardholder:
+    en: "Cardholder"
+    ja: "カード名義"
+  brand:
+    en: "Brand"
+    ja: "ブランド"
+  card_number:
+    en: "Card number"
+    ja: "カード番号"
+  expiry:
+    en: "Expiry"
+    ja: "有効期限"
+  security_code:
+    en: "Security code"
+    ja: "セキュリティコード"
+  name:
+    en: "Name"
+    ja: "氏名"
+  company:
+    en: "Company"
+    ja: "会社"
+  email:
+    en: "Email"
+    ja: "メールアドレス"
+  phone:
+    en: "Phone"
+    ja: "電話番号"
+  address:
+    en: "Address"
+    ja: "住所"
+  ssn:
+    en: "SSN"
+    ja: "社会保障番号"
+  public_key:
+    en: "Public key"
+    ja: "公開鍵"
+  fingerprint:
+    en: "Fingerprint"
+    ja: "フィンガープリント"
+  private_key:
+    en: "Private key"
+    ja: "秘密鍵"
+  notes:
+    en: "Notes"
+    ja: "メモ"
+  custom_field:
+    en: "Custom field"
+    ja: "カスタムフィールド"
+  attachment:
+    en: "Attachment"
+    ja: "添付ファイル"
+
+item_kind:
+  login:
+    en: "Login"
+    ja: "ログイン"
+  card:
+    en: "Card"
+    ja: "カード"
+  identity:
+    en: "Identity"
+    ja: "身元情報"
+  secure_note:
+    en: "Note"
+    ja: "セキュアノート"
+  ssh_key:
+    en: "SSH key"
+    ja: "SSHキー"
+  other:
+    en: "Other"
+    ja: "その他"
+
+error:
+  missing_input:
+    en: "Enter your email and master password."
+    ja: "メールアドレスとマスターパスワードを入力してください。"
+  invalid_credentials:
+    en: "The email or the master password is wrong."
+    ja: "メールアドレスかマスターパスワードが違います。"
+  two_factor_failed:
+    en: "That code was not accepted."
+    ja: "コードが正しくありません。"
+  two_factor_unsupported:
+    en: "This account needs a two-step method Kura does not support."
+    ja: "このアカウントはKuraが対応していない二段階認証方式を使っています。"
+  rejected:
+    en: "Refused by the server"
+    ja: "サーバーに拒否されました"
+  key_not_loaded:
+    en: "Signed in, but the vault key did not load."
+    ja: "ログインは通りましたが、復号鍵を読み込めませんでした。"
+  network:
+    en: "The server could not be reached."
+    ja: "サーバーに接続できませんでした。"
+  timeout:
+    en: "The server did not answer in time."
+    ja: "サーバーの応答がありませんでした。"
+  invalid_response:
+    en: "The server sent an answer Kura cannot read."
+    ja: "サーバーの応答を解釈できませんでした。"
+  not_found:
+    en: "That item is no longer in the vault."
+    ja: "その項目は保管庫にありません。"
+  no_totp:
+    en: "This item has no one-time code."
+    ja: "この項目にワンタイムコードはありません。"
+  no_password:
+    en: "This item has no password."
+    ja: "この項目にパスワードはありません。"
+  server:
+    en: "The server refused the request"
+    ja: "サーバーが要求を拒否しました"
+  account_deleted:
+    en: "The account has been deleted on the server."
+    ja: "アカウントはサーバーで削除されています。"
+  invalid_url:
+    en: "That server URL cannot be used."
+    ja: "そのサーバーURLは使用できません。"
+  insecure_url:
+    en: "Only https:// server URLs are allowed."
+    ja: "https:// のサーバーURLだけを指定できます。"
+  internal:
+    en: "Something went wrong."
+    ja: "問題が発生しました。"
+  session_not_saved:
+    en: "The login could not be saved. You will need to sign in again next time."
+    ja: "ログインを保存できませんでした。次回はもう一度ログインが必要です。"

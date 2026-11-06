@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/kura-core", "crates/kura-platform", "crates/kura-app", "crates/kura-dist"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+rust-version = "1.97"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# The master password KDF lives in a dependency. Unoptimised it takes seconds
+# per sign-in, so optimise the dependencies even in debug builds.
+[profile.dev.package."*"]
+opt-level = 3
+# Dependency debug info is copied into every binary at link time, which made the
+# test binaries ~1 GiB and dominated their link time. Line tables stay in the
+# workspace crates through the test profile below.
+debug = 0
+
+# Test binaries keep line numbers for backtraces but not the full DWARF.
+[profile.test]
+debug = 1

@@ -1,0 +1,17 @@
+context = """
+Kura is a native Windows Bitwarden-compatible client built with GPUI Kit and the Bitwarden Rust SDK.
+The workspace has three crates: kura-core (vault engine), kura-app (GPUI shell), and kura-platform (Win32 integration).
+Users install it with the Inno Setup installer and update from inside the app.
+"""
+
+system_extra = """
+Write changelog entries in English using Keep a Changelog categories.
+Describe user-visible changes. Omit internal refactors, CI, dependency updates and test-only changes unless they change behavior.
+Do not read every source file: the git log, README and Cargo.toml are enough context for the changelog.
+"""
+
+[defaults]
+model = "deepseek-v4.1-flash"
+provider = "openai"
+base_url = "https://opencode.ai/inference/go/openai/v1"
+repo = "hu-ja-ja/kura"
