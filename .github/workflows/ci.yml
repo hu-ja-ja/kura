@@ -12,6 +12,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   check:
     name: Build and test
@@ -24,10 +27,11 @@ jobs:
       - uses: jdx/mise-action@v5.2.6
       - uses: jdx/mr-boxington-action@v1.7.3
         with:
-          # Per-job keys: sharing one key would let whichever job saves last
-          # hand a target tree without this job's artifacts to the next run.
-          cache-key: mbx-check-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: mbx-check-${{ runner.os }}-${{ runner.arch }}-
+          cache-key: mbx-check-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: mbx-check-objects-${{ runner.os }}-${{ runner.arch }}-
+          github-cache-mode: objects
+          isolate-objects-cache: true
+          cache-links: true
       - name: Format and lint
         shell: pwsh
         run: mise run lint
@@ -52,8 +56,11 @@ jobs:
       - uses: jdx/mise-action@v5.2.6
       - uses: jdx/mr-boxington-action@v1.7.3
         with:
-          cache-key: mbx-package-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: mbx-package-${{ runner.os }}-${{ runner.arch }}-
+          cache-key: mbx-package-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: mbx-package-objects-${{ runner.os }}-${{ runner.arch }}-
+          github-cache-mode: objects
+          isolate-objects-cache: true
+          cache-links: true
       - name: Install Inno Setup
         shell: pwsh
         run: mise run install-inno
