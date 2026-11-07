@@ -91,7 +91,7 @@ jobs:
             echo "::error::CI for $SHA did not finish; wait for it and re-run the release"
           fi
           exit 1
-      - uses: jdx/mise-action@v5.2.6
+      - uses: jdx/mise-action@v5.2.7
         with:
           cache: false
           install_args: node
@@ -119,7 +119,7 @@ jobs:
           project-slug: kura-gd-y8
           env-slug: prod
           secret-name: ED25519_PUBLIC_KEY
-      - uses: jdx/mise-action@v5.2.6
+      - uses: jdx/mise-action@v5.2.7
         with:
           cache: false
       # A release event never writes the mbx cache, so a cache action here
@@ -149,7 +149,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.release.tag_name }}
-      - uses: jdx/mise-action@v5.2.6
+      - uses: jdx/mise-action@v5.2.7
         with:
           cache: false
           install_args: rust
@@ -196,7 +196,7 @@ jobs:
           set -euo pipefail
           chmod +x "$RUNNER_TEMP/release-tool/kura-dist"
           echo "$RUNNER_TEMP/release-tool" >> "$GITHUB_PATH"
-      - uses: jdx/mise-action@v5.2.6
+      - uses: jdx/mise-action@v5.2.7
         with:
           cache: false
           install_args: node
