@@ -15,7 +15,7 @@ concurrency:
 jobs:
   version:
     name: Resolve the version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -140,7 +140,7 @@ jobs:
 
   tools:
     name: Build the release tool
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -169,7 +169,7 @@ jobs:
   publish:
     name: Attach the installer and sign the manifest
     needs: [version, build, tools]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: write # upload the installer to the published release
@@ -263,7 +263,7 @@ jobs:
   pages:
     name: Deploy the manifest to GitHub Pages
     needs: [version, publish]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: write # mark the release latest once the live manifest verifies
