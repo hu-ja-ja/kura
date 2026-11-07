@@ -25,6 +25,8 @@ use crate::licenses;
 use crate::list::VaultDelegate;
 use crate::settings::{Settings, ThemeChoice};
 
+#[cfg(debug_assertions)]
+pub(crate) mod demo;
 mod detail_view;
 mod login;
 mod settings_view;

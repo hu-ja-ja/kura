@@ -182,15 +182,21 @@ impl Backend {
         self.unlocked.load(Ordering::SeqCst)
     }
 
-    /// A backend whose commands go nowhere, for UI tests that only drive the view.
-    #[cfg(test)]
-    pub fn detached(unlocked: bool) -> Self {
+    /// A backend whose commands go nowhere, with its event stream kept open so
+    /// the controller does not mistake it for a stopped worker.
+    pub fn detached(unlocked: bool) -> (Self, tokio::sync::mpsc::UnboundedReceiver<Event>) {
         let (commands, _dropped) = tokio::sync::mpsc::unbounded_channel();
-        Self {
-            commands,
-            cancel: Arc::new(Notify::new()),
-            unlocked: Arc::new(AtomicBool::new(unlocked)),
-        }
+        let (events, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Nothing sends events here, but the receiver must not close.
+        std::mem::forget(events);
+        (
+            Self {
+                commands,
+                cancel: Arc::new(Notify::new()),
+                unlocked: Arc::new(AtomicBool::new(unlocked)),
+            },
+            events_rx,
+        )
     }
 }
 

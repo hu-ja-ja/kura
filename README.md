@@ -7,6 +7,8 @@ English | [日本語](README.ja.md)
 
 Native Windows client for Bitwarden.
 
+![Vault item details in Kura](docs/screenshots/detail.en.png)
+
 ## Features
 
 - **Sign-in:** Master password, TOTP and email two-step verification; saved-login unlock.

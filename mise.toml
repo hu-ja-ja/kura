@@ -18,6 +18,14 @@ bin = "inno-setup"
 description = "Run the app"
 run = "cargo run -p kura-app"
 
+[tasks.demo]
+description = "Open the window with the README sample vault"
+run = "cargo run -p kura-app --features screenshots -- --demo"
+
+[tasks.screenshots]
+description = "Regenerate the README screenshots"
+run = "cargo run -p kura-app --features screenshots -- --demo --lang=en --screenshot=docs/screenshots/detail.en.png && cargo run -p kura-app --features screenshots -- --demo --lang=ja --screenshot=docs/screenshots/detail.ja.png"
+
 [tasks.check]
 description = "Type-check the workspace"
 run = "cargo check --workspace --all-targets"

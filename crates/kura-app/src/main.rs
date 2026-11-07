@@ -52,32 +52,53 @@ fn main() {
     // Before a vault can be opened: a dump of this process would hold the keys.
     kura_platform::disable_dumps();
 
+    #[cfg(debug_assertions)]
+    let demo = app::demo::install();
+    #[cfg(debug_assertions)]
+    let demo_mode = demo.is_some();
+    #[cfg(not(debug_assertions))]
+    let demo_mode = false;
+
+    #[cfg(debug_assertions)]
+    let settings = match demo {
+        Some(options) => app::demo::settings(options),
+        None => settings::Settings::load(),
+    };
+    #[cfg(not(debug_assertions))]
     let settings = settings::Settings::load();
     let locale = settings.locale();
     rust_i18n::set_locale(&locale);
     log::info!("locale: {locale}");
 
-    let saved_session = session::load();
+    // A demo must not open the real saved login or write to the real profile.
+    let saved_session = if demo_mode { None } else { session::load() };
     if saved_session.is_some() {
         log::info!("a saved login was found");
     }
     let start_in_tray = settings.start_in_tray;
 
     let (platform_events, platform_event_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (platform, instance) = match kura_platform::start(
-        platform_events,
-        controller::labels(),
-        settings.auto_lock().as_secs(),
-    ) {
-        Ok(started) => started,
-        Err(kura_platform::StartError::AlreadyRunning) => {
-            log::info!("another Kura is already running");
-            return;
-        }
-        Err(err) => {
-            log::error!("could not start the tray: {err}");
-            kura_platform::show_error(&format!("Kura could not start: {err}"));
-            std::process::exit(1);
+    let (platform, instance) = if demo_mode {
+        // No tray in a demo run. Hold the sender so the controller keeps
+        // running after it opens the window.
+        std::mem::forget(platform_events);
+        (kura_platform::Platform::detached(), None)
+    } else {
+        match kura_platform::start(
+            platform_events,
+            controller::labels(),
+            settings.auto_lock().as_secs(),
+        ) {
+            Ok((platform, instance)) => (platform, Some(instance)),
+            Err(kura_platform::StartError::AlreadyRunning) => {
+                log::info!("another Kura is already running");
+                return;
+            }
+            Err(err) => {
+                log::error!("could not start the tray: {err}");
+                kura_platform::show_error(&format!("Kura could not start: {err}"));
+                std::process::exit(1);
+            }
         }
     };
     // The named mutex is released when this drops, so keep it for the whole run.
@@ -95,11 +116,15 @@ fn main() {
             .expect("failed to start the tokio runtime"),
     ));
 
-    let (backend, backend_events) = backend::Backend::spawn(
-        runtime.handle(),
-        saved_session,
-        settings.confirmed_servers.clone(),
-    );
+    let (backend, backend_events) = if demo_mode {
+        backend::Backend::detached(true)
+    } else {
+        backend::Backend::spawn(
+            runtime.handle(),
+            saved_session,
+            settings.confirmed_servers.clone(),
+        )
+    };
 
     let (update_requests, update_request_rx) = tokio::sync::mpsc::unbounded_channel();
 

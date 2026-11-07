@@ -12,9 +12,15 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+# Offscreen window capture for the README screenshots. Needs GPUI's test
+# support to expose Window::render_to_image on Windows.
+screenshots = ["dep:image", "gpui-kit/test-support"]
+
 [dependencies]
 clipboard-win = { version = "5", features = ["std"] }
 gpui-kit = "0.9"
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 kura-core = { path = "../kura-core" }
 kura-dist = { path = "../kura-dist" }
 kura-platform = { path = "../kura-platform" }

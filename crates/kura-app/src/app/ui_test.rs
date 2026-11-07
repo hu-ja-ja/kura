@@ -58,7 +58,7 @@ fn open_saved(
                     let mut root = Root::new(
                         window,
                         cx,
-                        Backend::detached(unlocked),
+                        Backend::detached(unlocked).0,
                         settings,
                         clipboard,
                         kura_platform::Platform::detached(),

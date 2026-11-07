@@ -38,6 +38,16 @@ pub fn labels() -> kura_platform::Labels {
     }
 }
 
+/// The settings and saved login to open with. A demo run takes neither from
+/// the real profile.
+fn launch_state() -> (Settings, Option<kura_core::SavedSession>) {
+    #[cfg(debug_assertions)]
+    if let Some(options) = crate::app::demo::active() {
+        return (crate::app::demo::settings(options), None);
+    }
+    (Settings::load(), crate::session::load())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn start(
     cx: &mut App,
@@ -169,8 +179,7 @@ impl Controller {
             }
         }
 
-        let settings = Settings::load();
-        let saved = crate::session::load();
+        let (settings, saved) = launch_state();
         let saved_email = saved.as_ref().map(|saved| saved.email.clone());
         let saved_server = saved.as_ref().and_then(|saved| {
             kura_core::server_url_from_saved(&saved.identity_url, &saved.api_url)
@@ -212,6 +221,15 @@ impl Controller {
             .flatten();
         if let Some(hwnd) = self.hwnd {
             kura_platform::set_window_icon(hwnd);
+        }
+        #[cfg(debug_assertions)]
+        if crate::app::demo::active().is_some() {
+            if let Err(err) = handle.update(cx, |_, window, cx| {
+                root.update(cx, |root, cx| crate::app::demo::schedule(root, window, cx))
+            }) {
+                log::error!("could not seed the demo vault: {err}");
+            }
+            crate::app::demo::capture(handle, cx);
         }
         self.window = Some((handle, root.downgrade()));
     }
@@ -347,6 +365,10 @@ impl Controller {
     }
 
     fn save_window_state(&mut self, cx: &mut AsyncApp) {
+        #[cfg(debug_assertions)]
+        if crate::app::demo::active().is_some() {
+            return;
+        }
         let Some((handle, _)) = self.window.clone() else {
             return;
         };

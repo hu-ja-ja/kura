@@ -5734,6 +5734,7 @@ version = "0.1.0"
 dependencies = [
  "clipboard-win",
  "gpui-kit",
+ "image",
  "kura-core",
  "kura-dist",
  "kura-platform",

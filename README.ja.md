@@ -7,6 +7,8 @@
 
 Windows用のネイティブBitwardenクライアントです。
 
+![項目の詳細を表示しているKura](docs/screenshots/detail.ja.png)
+
 ## 機能
 
 - **ログイン:** マスターパスワード、TOTPとメールの2段階認証、保存ログインでの解除。
