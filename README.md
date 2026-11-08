@@ -11,21 +11,20 @@ Native Windows client for Bitwarden.
 
 ## Features
 
-- **Sign-in:** Master password, TOTP and email two-step verification; saved-login unlock.
+- **Sign-in:** Master password; TOTP or email two-step verification; master-password unlock from a saved login.
 - **Vault:** Search, folders, favorites, and item details.
 - **Actions:** Copy credentials and TOTP codes; open URIs.
 - **Desktop:** System tray, auto-lock, autostart, and single-instance support.
 - **Security:** Protected saved login, clipboard auto-clear after 30 seconds, and screen capture protection.
-- **Updates:** Signed in-app updates.
+- **Updates:** Updates verified against an Ed25519-signed manifest.
+- **Languages:** English and Japanese UI.
 
-## Requirements
+## Supported environment
 
-| Requirement     | Supported                            |
+| Item            | Supported                            |
 | --------------- | ------------------------------------ |
 | Windows         | Windows 10 22H2 or later; Windows 11 |
 | Architecture    | x64                                  |
-| Display scaling | 100% to 200%                         |
-| Input           | Japanese IME                         |
 
 ## Download and install
 
