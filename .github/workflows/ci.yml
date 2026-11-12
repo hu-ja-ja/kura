@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.8
       - uses: jdx/mr-boxington-action@v1.7.3
         with:
           cache-key: mbx-check-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.8
       - uses: jdx/mr-boxington-action@v1.7.3
         with:
           cache-key: mbx-package-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -86,7 +86,7 @@ jobs:
           set -euo pipefail
           gh extension install github/gh-actions-lock --force --pin v0.4.1
           gh actions-lock --verify
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.8
         with:
           install_args: "shellcheck jactionlint"
       - name: Lint the workflows
