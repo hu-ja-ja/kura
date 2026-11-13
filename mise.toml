@@ -1,10 +1,10 @@
 [tools]
 rust = { version = "1.97.1-x86_64-pc-windows-gnu", components = ["rustfmt", "clippy"], mr_boxington = true }
-mr-boxington = "1.29.2"
-node = "26.12.1"
-infisical = "0.44.10"
+mr-boxington = "v1.30.0"
+node = "26.13.1"
+infisical = "v0.45.8"
 shellcheck = "0.11.0"
-jactionlint = "2.5.0"
+jactionlint = "v2.6.0"
 communique = { version = "1.8.0", workflow = "release.yml@refs/heads/main" }
 "aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
 

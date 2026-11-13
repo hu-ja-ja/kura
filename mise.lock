@@ -102,147 +102,159 @@ checksum = "sha256:0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40d
 url = "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe"
 
 [[tools.infisical]]
-version = "0.44.10"
+version = "0.45.8"
 backend = "github:Infisical/cli"
-specifiers = ["0.44.10"]
+specifiers = ["v0.45.8"]
 
 [tools.infisical.options]
 asset_pattern = "cli_{{ version }}_{{ os(macos='darwin') }}_{{ arch(x64='amd64') }}.tar.gz"
 
 [tools.infisical."platforms.linux-arm64"]
-checksum = "sha256:97d49c74b16eb9d7d492e4825a941b0386d00de0bcdf0e4e023687cc754bd5b2"
-url = "https://github.com/Infisical/cli/releases/download/v0.44.10/cli_0.44.10_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/683122907"
+checksum = "sha256:f2e637e4d91e0075f849434a9537f301e83b46c803125dc247aefe534aa127ff"
+checksum_source = "mise-versions"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.8/cli_0.45.8_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/743871415"
 
 [tools.infisical."platforms.linux-arm64-musl"]
-checksum = "sha256:97d49c74b16eb9d7d492e4825a941b0386d00de0bcdf0e4e023687cc754bd5b2"
-url = "https://github.com/Infisical/cli/releases/download/v0.44.10/cli_0.44.10_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/683122907"
+checksum = "sha256:f2e637e4d91e0075f849434a9537f301e83b46c803125dc247aefe534aa127ff"
+checksum_source = "mise-versions"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.8/cli_0.45.8_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/743871415"
 
 [tools.infisical."platforms.linux-x64"]
-checksum = "sha256:3800bded850e00ce1c402a48f081c4b210cfbdf4f9a4a794cf159a2fef0a8efa"
-url = "https://github.com/Infisical/cli/releases/download/v0.44.10/cli_0.44.10_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/683122916"
+checksum = "sha256:b0ddefa3f744f66cdeb5c5beab94ce3c28c7d12a4db03de612c0eb079f6a5655"
+checksum_source = "mise-versions"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.8/cli_0.45.8_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/743871524"
 
 [tools.infisical."platforms.linux-x64-musl"]
-checksum = "sha256:3800bded850e00ce1c402a48f081c4b210cfbdf4f9a4a794cf159a2fef0a8efa"
-url = "https://github.com/Infisical/cli/releases/download/v0.44.10/cli_0.44.10_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/683122916"
+checksum = "sha256:b0ddefa3f744f66cdeb5c5beab94ce3c28c7d12a4db03de612c0eb079f6a5655"
+checksum_source = "mise-versions"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.8/cli_0.45.8_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/743871524"
 
 [tools.infisical."platforms.macos-arm64"]
-checksum = "sha256:e7317e711ed899b20c828574166438b953c37dafe611fcda47233bb7d749b46e"
-url = "https://github.com/Infisical/cli/releases/download/v0.44.10/cli_0.44.10_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/683108814"
+checksum = "sha256:8f5beab19c084d42ae01db7b120b72005f3f74274930a508559c1022cdcf40e1"
+checksum_source = "mise-versions"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.8/cli_0.45.8_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/743853858"
 
 [tools.infisical."platforms.windows-x64"]
-checksum = "sha256:7d2e48217a4e500fcbef2a8d20091fb1c0488fe0ea22106f45678131c6949201"
-url = "https://github.com/Infisical/cli/releases/download/v0.44.10/cli_0.44.10_windows_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/683124358"
+checksum = "sha256:fa37ae66973f1aea7c31891dfff86475d074f990a0df7799720f79894a92a619"
+checksum_source = "mise-versions"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.8/cli_0.45.8_windows_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/743869068"
 
 [[tools.jactionlint]]
-version = "2.5.0"
+version = "2.6.0"
 backend = "github:jdx/jactionlint"
-specifiers = ["2.5.0"]
+specifiers = ["v2.6.0"]
 
 [tools.jactionlint."platforms.linux-arm64"]
-checksum = "sha256:ad7e33b6264cea16b7e83ad2bb004824d5b1c15aedb35ba0dc84917f791c5525"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298511"
+checksum = "sha256:c726185a85f26d09aa94ea556509a19827979074b35d65f357f3a4947573e934"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515805"
 provenance = "github-attestations"
 
 [tools.jactionlint."platforms.linux-arm64-musl"]
-checksum = "sha256:ad7e33b6264cea16b7e83ad2bb004824d5b1c15aedb35ba0dc84917f791c5525"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298511"
+checksum = "sha256:c726185a85f26d09aa94ea556509a19827979074b35d65f357f3a4947573e934"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515805"
 provenance = "github-attestations"
 
 [tools.jactionlint."platforms.linux-x64"]
-checksum = "sha256:5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298541"
+checksum = "sha256:d5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515801"
 provenance = "github-attestations"
 
 [tools.jactionlint."platforms.linux-x64-musl"]
-checksum = "sha256:5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298541"
+checksum = "sha256:d5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515801"
 provenance = "github-attestations"
 
 [tools.jactionlint."platforms.macos-arm64"]
-checksum = "sha256:15b47d53e3b1aafbd674cca0e8fff0d5952f3cf2a7d7501a8f67576ef76397b4"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298455"
+checksum = "sha256:c3f373c7eac668aacb390b9c802cf4b5e2ad1a11b0b0c0aea6b04ca0cfa0c018"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740515965"
 provenance = "github-attestations"
 
 [tools.jactionlint."platforms.windows-x64"]
-checksum = "sha256:6f6202d6fc476cbe3978c7dd2349c881cfcfa98257593cb2f1bde87004f054c6"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_windows_amd64.zip"
-url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/714298686"
+checksum = "sha256:e939dd8c0eeeb620e70d30aa9aa21c671be078876660a831a82d07e372f0fa4d"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_windows_amd64.zip"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/740516065"
 provenance = "github-attestations"
 
 [[tools.mr-boxington]]
-version = "1.29.2"
+version = "1.30.0"
 backend = "packslip:github.com/jdx/mr-boxington"
-specifiers = ["1.29.2"]
+specifiers = ["v1.30.0"]
 
 [tools.mr-boxington."platforms.linux-arm64"]
-checksum = "sha256:1b6fbaebe0ea2c9b565c862a2b46e4756394ad530ce95b07333743104750a6fb"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.29.2/mbx-aarch64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:6317bb6780404e78c3b670d95e128c85871809dfc541882b2efaa34120f45e71"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.30.0/mbx-aarch64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
+repository_ids = { repository = "1340721957" }
 
 [tools.mr-boxington."platforms.linux-arm64-musl"]
-checksum = "sha256:bd7904aedff78a48b0339ab8efce0c3b86505c0b77fe63964504dae2f843b9d6"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.29.2/mbx-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:900844b980f9e3daf778d38a19046281cc35e07108a9c821befef6130846df1f"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.30.0/mbx-aarch64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
+repository_ids = { repository = "1340721957" }
 
 [tools.mr-boxington."platforms.linux-x64"]
-checksum = "sha256:73e135d3e9e8b8ddc938b42407179a239917b7f02d3fa5f601f6783e5c0d36d6"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.29.2/mbx-x86_64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:f4992b401fe65744b7c6e7400933d2106da205b499405621d088051a31a8f3f2"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.30.0/mbx-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
+repository_ids = { repository = "1340721957" }
 
 [tools.mr-boxington."platforms.linux-x64-musl"]
-checksum = "sha256:60be3ffbb4d71418827ed28686c776b86bdbb804edd43739b1dbfcdf162fbcb5"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.29.2/mbx-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:b523a9324d50fd434e355fc7a5af5f7155d62854dd6a5a74173d52655f168d45"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.30.0/mbx-x86_64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
+repository_ids = { repository = "1340721957" }
 
 [tools.mr-boxington."platforms.macos-arm64"]
-checksum = "sha256:621ce235d8f241c5a3728ca03d34b9864f466f4e8b3307d8a6d7101a24a71a60"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.29.2/mbx-aarch64-apple-darwin.tar.gz"
+checksum = "sha256:d5b957216c8b61c2df91c9e7aaf5febd45ec74274a60d3714ebe316edc144543"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.30.0/mbx-aarch64-apple-darwin.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
+repository_ids = { repository = "1340721957" }
 
 [tools.mr-boxington."platforms.windows-x64"]
-checksum = "sha256:5ccfe5942c224844ffc50eb689de9c02033e401b210d3c80fffe4b94c929b0a2"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.29.2/mbx-x86_64-pc-windows-msvc.zip"
+checksum = "sha256:2d709445957ea5dae95d51379aa9e7e575cfedb12c0d5731de4761a6972626f5"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.30.0/mbx-x86_64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
+repository_ids = { repository = "1340721957" }
 
 [[tools.node]]
-version = "26.12.1"
+version = "26.13.1"
 backend = "core:node"
-specifiers = ["26.12.1"]
+specifiers = ["26.13.1"]
 
 [tools.node."platforms.linux-arm64"]
-checksum = "sha256:a6c01af459dd8972ab3fb08ee5da81244d26ba8c4944a62d5bbba8c597ae154f"
-url = "https://nodejs.org/dist/v26.12.1/node-v26.12.1-linux-arm64.tar.gz"
+checksum = "sha256:80a330b35415382878df18d41afbd106ea89bfb3be0087d6608e289a14c5cc7d"
+url = "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-arm64.tar.gz"
 
 [tools.node."platforms.linux-arm64-musl"]
-checksum = "sha256:c3694551f6cb888fe0befb4cb2e13ffe45b0bb2528ec141e7c3a29a7d7974d13"
-url = "https://unofficial-builds.nodejs.org/download/release/v26.12.1/node-v26.12.1-linux-arm64-musl.tar.gz"
+checksum = "sha256:42684e7f1830ef9eaadd040672cba41bbaff9549d834600699f92ee1ee5b1fb1"
+url = "https://unofficial-builds.nodejs.org/download/release/v26.13.1/node-v26.13.1-linux-arm64-musl.tar.gz"
 
 [tools.node."platforms.linux-x64"]
-checksum = "sha256:0fd1eb7770598f52a21995edf6ed35fc690400fa437c2386af329519e9143132"
-url = "https://nodejs.org/dist/v26.12.1/node-v26.12.1-linux-x64.tar.gz"
+checksum = "sha256:518674de2b621728a5e4486f5fb3b7d2900bb3cc4aa97969edaa463db99f9778"
+url = "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.gz"
 
 [tools.node."platforms.linux-x64-musl"]
-checksum = "sha256:8bf9cc0e7f8e3c7ec5368dca19242cad651b6b09d35bcdcf290ac3f80925e8dd"
-url = "https://unofficial-builds.nodejs.org/download/release/v26.12.1/node-v26.12.1-linux-x64-musl.tar.gz"
+checksum = "sha256:04bf9ed3e32ea139c9af52f6dd06879ff6f8880555a0aa1183ef2d156c0e02d3"
+url = "https://unofficial-builds.nodejs.org/download/release/v26.13.1/node-v26.13.1-linux-x64-musl.tar.gz"
 
 [tools.node."platforms.macos-arm64"]
-checksum = "sha256:1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8"
-url = "https://nodejs.org/dist/v26.12.1/node-v26.12.1-darwin-arm64.tar.gz"
+checksum = "sha256:aec2514ea1ceb2ba52455e9ec65986f6749a06dd759e5db2a72e6889668c9735"
+url = "https://nodejs.org/dist/v26.13.1/node-v26.13.1-darwin-arm64.tar.gz"
 
 [tools.node."platforms.windows-x64"]
-checksum = "sha256:b3efd5c70cba3308ed46e7e699a9b8aac075bbc6b027fcb39c84c31acc25e2b4"
-url = "https://nodejs.org/dist/v26.12.1/node-v26.12.1-win-x64.zip"
+checksum = "sha256:e2edda75bfb089654705cf65a13b58933bfd5f57148e8ebda916f58a2474f1f7"
+url = "https://nodejs.org/dist/v26.13.1/node-v26.13.1-win-x64.zip"
 
 [[tools.rust]]
 version = "1.97.1-x86_64-pc-windows-gnu"
