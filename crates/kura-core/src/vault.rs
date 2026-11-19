@@ -161,9 +161,8 @@ impl Vault {
             .0
             .platform()
             .state()
-            .setting(AUTHENTICATION_TOKENS)
-            .map_err(|_| CoreError::Internal("read the saved tokens"))?
-            .update(saved.tokens.clone())
+            .value::<AUTHENTICATION_TOKENS>()
+            .set(saved.tokens.clone())
             .await
             .map_err(|_| CoreError::Internal("install the saved tokens"))?;
 
@@ -201,9 +200,8 @@ impl Vault {
             .0
             .platform()
             .state()
-            .setting(USER_LOGIN_METHOD)
-            .map_err(|_| CoreError::Internal("read the login method"))?
-            .update(UserLoginMethod::Username {
+            .value::<USER_LOGIN_METHOD>()
+            .set(UserLoginMethod::Username {
                 client_id: "web".to_string(),
                 email: saved.unlock.salt.clone(),
                 kdf: saved.unlock.kdf.clone(),
@@ -227,12 +225,10 @@ impl Vault {
             .0
             .platform()
             .state()
-            .setting(AUTHENTICATION_TOKENS)
-            .map_err(|_| CoreError::Internal("read the authentication tokens"))?
+            .value::<AUTHENTICATION_TOKENS>()
             .get()
             .await
-            .map_err(|_| CoreError::Internal("read the authentication tokens"))?
-            .ok_or(CoreError::Internal("the session has no tokens"))
+            .map_err(|_| CoreError::Internal("read the authentication tokens"))
     }
 
     /// Copy renewed tokens into `saved`. Returns whether anything changed.
@@ -267,12 +263,10 @@ impl Vault {
             WrappedAccountCryptographicState::V1 { private_key }
         };
         let login_method = state
-            .setting(USER_LOGIN_METHOD)
-            .map_err(|_| CoreError::Internal("read the login method"))?
+            .value::<USER_LOGIN_METHOD>()
             .get()
             .await
-            .map_err(|_| CoreError::Internal("read the login method"))?
-            .ok_or(CoreError::Internal("the saved login has no login method"))?;
+            .map_err(|_| CoreError::Internal("read the login method"))?;
         let UserLoginMethod::Username {
             email: salt, kdf, ..
         } = login_method
@@ -807,11 +801,9 @@ mod tests {
             .0
             .platform()
             .state()
-            .setting(USER_LOGIN_METHOD)
-            .unwrap()
+            .value::<USER_LOGIN_METHOD>()
             .get()
             .await
-            .unwrap()
             .unwrap();
         let UserLoginMethod::Username {
             client_id, email, ..
@@ -886,9 +878,8 @@ mod tests {
             .0
             .platform()
             .state()
-            .setting(AUTHENTICATION_TOKENS)
-            .unwrap()
-            .update(AuthenticationTokens {
+            .value::<AUTHENTICATION_TOKENS>()
+            .set(AuthenticationTokens {
                 access_token: "renewed".to_string(),
                 refresh_token: Some("renewed refresh".to_string()),
                 expires_on: 1234,
