@@ -4,6 +4,7 @@
 version: 'v0.0.3'
 workflows:
     '.github/workflows/ci.yml':
+        - 'actions-rust-lang/setup-rust-toolchain@v2.0.1'
         - 'actions/checkout@v7.0.1'
         - 'jdx/mise-action@v5.2.10'
         - 'jdx/mr-boxington-action@v1.7.3'
@@ -17,6 +18,13 @@ workflows:
         - 'infisical/secrets-action@v1.0.18'
         - 'jdx/mise-action@v5.2.10'
 dependencies:
+    'actions-rust-lang/setup-rust-toolchain@v2.0.1':
+        ref: 'v2.0.1'
+        commit: 'sha1-a188e68d0fd2bd36ad51dccb2b07ba6e75105f30'
+        owner_id: 103899579
+        repo_id: 482610590
+        uses:
+            - 'swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
         commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
@@ -69,3 +77,8 @@ dependencies:
         commit: 'sha1-88acf2bb50552c7c508cbac13e5f8c576b95b1de'
         owner_id: 216188
         repo_id: 1345301886
+    'swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0':
+        ref: 'v2.9.3'
+        commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
+        owner_id: 580492
+        repo_id: 298565987
