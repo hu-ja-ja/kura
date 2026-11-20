@@ -32,7 +32,7 @@ use bitwarden_vault::{
     FolderSyncHandler, GetCipherError,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 
@@ -47,7 +47,6 @@ use crate::write::{
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const SYNC_TIMEOUT: Duration = Duration::from_secs(60);
-const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Which step of the login produced an error. The same server answer means
 /// different things in each step.
@@ -86,7 +85,7 @@ pub struct Vault {
     api_url: String,
     /// Sync and every write take this lock. A stale sync response must not run
     /// between a write's revision check and its commit.
-    operations: Mutex<()>,
+    operations: RwLock<()>,
     /// Whether the installed user id came from the server profile rather than
     /// an older saved file's generated id.
     user_id_confirmed: AtomicBool,
@@ -162,7 +161,7 @@ impl Vault {
             sync,
             identity_url,
             api_url,
-            operations: Mutex::new(()),
+            operations: RwLock::new(()),
             user_id_confirmed: AtomicBool::new(false),
         })
     }
@@ -393,8 +392,8 @@ impl Vault {
     }
 
     #[cfg(test)]
-    async fn hold_operations(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.operations.lock().await
+    async fn hold_operations(&self) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+        self.operations.write().await
     }
 
     /// Copy the server's user id into an older saved file after a restore.
@@ -531,7 +530,7 @@ impl Vault {
     /// Returns whether a sync was performed; false means the vault was already
     /// up to date.
     pub async fn sync(&self, force: bool) -> Result<bool, CoreError> {
-        let _operations = self.operations.lock().await;
+        let _operations = self.operations.write().await;
         self.sync_locked(force).await
     }
 
@@ -562,7 +561,7 @@ impl Vault {
     /// Create a login. The editor shows the new item only after a successful
     /// answer, so an offline save leaves the vault unchanged.
     pub async fn create_login(&self, draft: &LoginDraft) -> Result<String, CoreError> {
-        let _operations = self.operations.lock().await;
+        let _operations = self.operations.write().await;
         if !self.is_unlocked() {
             return Err(CoreError::Internal("create without an open vault"));
         }
@@ -574,10 +573,15 @@ impl Vault {
         self.ensure_folder(draft).await?;
         let request = build_create_request(draft)?;
         // shortcut: if the connection drops after the server commits, a retry
-        // can create a duplicate. The SDK exposes no idempotency key.
-        let view = timeout(WRITE_TIMEOUT, self.client.vault().ciphers().create(request))
+        // can create a duplicate. The SDK exposes no idempotency key. Do not
+        // wrap this in `timeout` or `select!`: cancelling the future cannot
+        // tell whether the server committed.
+        let view = self
+            .client
+            .vault()
+            .ciphers()
+            .create(request)
             .await
-            .map_err(|_| CoreError::Timeout)?
             .map_err(map_create_error)?;
         view.id
             .map(|id| id.to_string())
@@ -594,7 +598,7 @@ impl Vault {
         opened_revision: &str,
         draft: &LoginDraft,
     ) -> Result<(), CoreError> {
-        let _operations = self.operations.lock().await;
+        let _operations = self.operations.write().await;
         if !self.is_unlocked() {
             return Err(CoreError::Internal("edit without an open vault"));
         }
@@ -612,9 +616,9 @@ impl Vault {
             return Ok(());
         }
         let request = build_edit_request(view, draft)?;
-        let result = timeout(WRITE_TIMEOUT, self.client.vault().ciphers().edit(request))
-            .await
-            .map_err(|_| CoreError::Timeout)?;
+        // A write is not cancellation-safe. Await it; a lock is applied by the
+        // worker after this future returns.
+        let result = self.client.vault().ciphers().edit(request).await;
         if matches!(&result, Err(EditCipherError::Api(err)) if is_stale_revision(err)) {
             // The server changed after the pre-save sync. Refresh the local
             // copy so reopening the editor does not conflict again.
@@ -628,7 +632,7 @@ impl Vault {
     /// Move a login to the trash. A server 404 means the item is already gone,
     /// so the local copy is removed and the request succeeds.
     pub async fn delete_login(&self, id: &str) -> Result<(), CoreError> {
-        let _operations = self.operations.lock().await;
+        let _operations = self.operations.write().await;
         if !self.is_unlocked() {
             return Err(CoreError::Internal("delete without an open vault"));
         }
@@ -647,10 +651,9 @@ impl Vault {
             Err(err) => return Err(map_get_error(err)),
         }
 
-        match timeout(WRITE_TIMEOUT, self.client.vault().ciphers().soft_delete(id))
-            .await
-            .map_err(|_| CoreError::Timeout)?
-        {
+        // A write is not cancellation-safe. Await it; a lock is applied by the
+        // worker after this future returns.
+        match self.client.vault().ciphers().soft_delete(id).await {
             Ok(()) => Ok(()),
             Err(err) => match classify_delete_failure(err) {
                 DeleteFailure::AlreadyGone => {
@@ -708,7 +711,7 @@ impl Vault {
 
     /// The current list of items, decrypted and ready to show.
     pub async fn snapshot(&self) -> Result<VaultSnapshot, CoreError> {
-        let _operations = self.operations.lock().await;
+        let _operations = self.operations.read().await;
         // `list` decrypts only the list fields. That helps items in the old
         // field-level format; a blob-format item is unsealed whole anyway.
         let decrypted = self
@@ -1457,6 +1460,17 @@ mod tests {
         assert_eq!(snapshot.items.len(), 1);
         assert_eq!(snapshot.items[0].name, "GitHub");
         assert_eq!(snapshot.decrypt_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn a_locked_vault_keeps_its_authentication_tokens() {
+        let mut saved = saved_session();
+        let vault = Vault::restore(&saved, PASSWORD).await.unwrap();
+        vault.lock().await;
+
+        // Locking clears the keys, not the tokens the next start saves.
+        assert!(!vault.is_unlocked());
+        assert!(vault.update_saved_tokens(&mut saved).await.is_ok());
     }
 
     #[tokio::test]
