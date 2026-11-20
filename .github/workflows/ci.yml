@@ -25,7 +25,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@v5.2.10
-      - uses: jdx/mr-boxington-action@v1.7.3
+      - uses: jdx/mr-boxington-action@v1.7.4
         with:
           cache-key: mbx-check-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           restore-keys: mbx-check-objects-${{ runner.os }}-${{ runner.arch }}-
@@ -54,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@v5.2.10
-      - uses: jdx/mr-boxington-action@v1.7.3
+      - uses: jdx/mr-boxington-action@v1.7.4
         with:
           cache-key: mbx-package-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           restore-keys: mbx-package-objects-${{ runner.os }}-${{ runner.arch }}-
