@@ -227,9 +227,10 @@ because Kura does not match them.
   open, so reopening the editor sees the new local revision.
 - A delete 404 is idempotent success. A locally missing ID is treated as
   already gone without sending its unknown type through the login delete API.
-- Sync, create, edit, delete, and snapshot take one operation mutex. Worker
-  snapshot publication is interruptible by lock, so a lock never waits behind
-  a sync holding that mutex.
+- Sync and writes take the write side of one operation read/write lock;
+  snapshot takes the read side. Worker snapshot publication is interruptible
+  by lock. A write is never cancelled: the worker waits for it, and the queued
+  lock then clears the keys, so a lock cannot lose the answer from the server.
 
 The diagram shows the edit path from the form to the published snapshot. The
 bullets above remain the rules: create skips the pre-save sync and revision
@@ -250,7 +251,7 @@ sequenceDiagram
   Note over UI: Form becomes read-only
   UI->>W: Command::Save(draft, id, revision)
   W->>V: edit_login
-  V->>V: lock operation mutex
+  V->>V: lock operation write lock
   V->>SDK: pre-save sync
   alt revision differs
     V-->>W: Conflict
@@ -274,8 +275,9 @@ sequenceDiagram
   Note over UI: Failure keeps the form and its input
 ```
 
-A lock cancels an in-flight command or publication, and the cancelled future
-drops the operation mutex.
+A lock interrupts snapshot publication and prevents new commands. An in-flight
+write is allowed to finish; the queued Lock then clears the keys. Cancelling a
+write future could hide a request the server already committed.
 
 ### Error Mapping
 
@@ -562,10 +564,12 @@ the bundled license list.
 - `mise run lint` runs formatting and clippy. `cargo test` runs the workspace
   tests. `mise run audit` checks dependencies for advisories.
 - `write.rs` tests cover the protocol matrix and all 90 start/apply schedules.
-  A vault test holds the real operation mutex and checks that sync, snapshot,
-  and writes wait for it. `mise run test:mutants` targets the write paths.
+  A vault test holds the real operation write lock and checks that sync,
+  snapshot, and writes wait for it. `mise run test:mutants` targets the write
+  paths.
 - `mise run test:live` runs ignored tests against a loopback Vaultwarden. The
-  tests refuse non-loopback URLs and are not part of CI.
+  tests refuse non-loopback URLs. CI runs the same test on Linux against a
+  Vaultwarden service container.
 
 ## Current Constraints
 

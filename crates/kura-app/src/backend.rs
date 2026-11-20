@@ -279,6 +279,14 @@ fn cancel_drops(session: &Session) -> bool {
     session.password.is_some() || session.vault.is_unlocked()
 }
 
+/// Drop a session without leaving its keys in a task that still holds the
+/// client.
+async fn take_session(session: &mut Option<Session>) {
+    if let Some(current) = session.take() {
+        current.vault.lock().await;
+    }
+}
+
 /// Which kind of background sync finished.
 #[derive(Clone, Copy)]
 enum SyncKind {
@@ -353,6 +361,10 @@ fn log_failure(context: &str, err: &CoreError) {
 /// true.
 async fn wait_for_lock(notify: &Notify, unlocked: &AtomicBool) {
     let notified = notify.notified();
+    // `notify_waiters` does not store a permit. Register before the flag read
+    // so a lock that lands before the first poll is observed.
+    tokio::pin!(notified);
+    notified.as_mut().enable();
     if !unlocked.load(Ordering::SeqCst) {
         return;
     }
@@ -463,7 +475,7 @@ async fn handle(
                     result.map(|()| None)
                 } else {
                     // A vault for another account cannot answer this login.
-                    *session = None;
+                    take_session(session).await;
                     let result = tokio::select! {
                         _ = cancel.notified() => None,
                         result = Vault::restore(data, &password) => Some(result),
@@ -532,7 +544,7 @@ async fn handle(
                             // wants now; the password is still in hand.
                             Err(err @ (CoreError::Rejected(_) | CoreError::AccountDeleted)) => {
                                 log_failure("sync the opened vault", &err);
-                                *session = None;
+                                take_session(session).await;
                                 unlocked.store(false, Ordering::SeqCst);
                                 let _ = events.send(Event::Locked);
                                 drop_saved = true;
@@ -605,6 +617,7 @@ async fn handle(
             match outcome {
                 Ok(LoginOutcome::LoggedIn) => {
                     let remembered = remember(&vault, saved, &email, &password).await;
+                    take_session(session).await;
                     *session = Some(Session {
                         vault: Arc::new(vault),
                         email,
@@ -626,6 +639,7 @@ async fn handle(
                     }
                 }
                 Ok(LoginOutcome::TwoFactorRequired(challenge)) => {
+                    take_session(session).await;
                     *session = Some(Session {
                         vault: Arc::new(vault),
                         email,
@@ -736,7 +750,7 @@ async fn handle(
             // Keep a vault that is only retained for the next unlock. A pending
             // second factor or an open vault belongs to the sign-in flow.
             if session.as_ref().is_some_and(cancel_drops) {
-                *session = None;
+                take_session(session).await;
             }
             unlocked.store(false, Ordering::SeqCst);
             // The UI may already have reset itself, but a LoggedIn event that
@@ -776,17 +790,17 @@ async fn handle(
                 .as_ref()
                 .is_some_and(|current| current.password.is_some() && !current.vault.is_unlocked());
             if pending_second_factor {
-                *session = None;
+                take_session(session).await;
             } else if let Some(current) = session.as_mut()
                 && current.vault.is_unlocked()
             {
-                // A request may have renewed the tokens since the last sync.
-                // Keep the freshest pair before the keys are dropped.
-                keep_saved_tokens(&current.vault, &current.email, saved).await;
-                // A cancellation after authentication may have interrupted the
-                // profile step before the password was taken.
-                current.password = None;
+                // Drop the keys first. Saving the renewed tokens does not need
+                // them and must not delay a lock.
                 current.vault.lock().await;
+                // A request may have renewed the tokens since the last sync.
+                keep_saved_tokens(&current.vault, &current.email, saved).await;
+                // Never keep the master password for a retry after a lock.
+                current.password = None;
                 // The client and its encrypted items stay for the next unlock.
             }
             // Without a saved login that matches this vault, nothing can open
@@ -942,18 +956,17 @@ async fn handle(
                 let _ = events.send(Event::WriteFailed { generation, err });
                 return;
             };
+            // A write is not cancellation-safe. Await it even when a lock is
+            // requested: the queued Lock clears the keys and the form is gone.
             let result = match (id.as_deref(), revision.as_deref()) {
-                (None, None) => tokio::select! {
-                    _ = wait_for_lock(cancel, unlocked) => return,
-                    result = current.vault.create_login(&draft) => result.map(|_| ()),
-                },
-                (Some(id), Some(revision)) => tokio::select! {
-                    _ = wait_for_lock(cancel, unlocked) => return,
-                    result = current.vault.edit_login(id, revision, &draft) => result,
-                },
+                (None, None) => current.vault.create_login(&draft).await.map(|_| ()),
+                (Some(id), Some(revision)) => current.vault.edit_login(id, revision, &draft).await,
                 _ => Err(CoreError::Internal("save with an incomplete item identity")),
             };
             keep_saved_tokens(&current.vault, &current.email, saved).await;
+            if !unlocked.load(Ordering::SeqCst) {
+                return;
+            }
             match result {
                 Ok(()) => {
                     let _ = events.send(Event::Saved(generation));
@@ -988,11 +1001,13 @@ async fn handle(
                 let _ = events.send(Event::WriteFailed { generation, err });
                 return;
             };
-            let result = tokio::select! {
-                _ = wait_for_lock(cancel, unlocked) => return,
-                result = current.vault.delete_login(&id) => result,
-            };
+            // A write is not cancellation-safe. Await it even when a lock is
+            // requested: the queued Lock clears the keys and the list is gone.
+            let result = current.vault.delete_login(&id).await;
             keep_saved_tokens(&current.vault, &current.email, saved).await;
+            if !unlocked.load(Ordering::SeqCst) {
+                return;
+            }
             match result {
                 Ok(()) => {
                     let _ = events.send(Event::Deleted(generation));
@@ -1107,7 +1122,7 @@ async fn finish_sync(
                 // The password is gone after an unlock, so the only way back
                 // is the sign-in form.
                 SyncKind::AfterUnlock if rejected => {
-                    *session = None;
+                    take_session(session).await;
                     unlocked.store(false, Ordering::SeqCst);
                     let _ = events.send(Event::Locked);
                 }
@@ -1384,6 +1399,39 @@ mod tests {
             password: Some(Zeroizing::new("a master password".to_string())),
         };
         assert!(cancel_drops(&second_factor));
+    }
+
+    #[tokio::test]
+    async fn cancel_drops_a_pending_sign_in_and_reports_the_lock() {
+        let vault = Arc::new(Vault::connect(None).unwrap());
+        let mut session = Some(Session {
+            vault: Arc::clone(&vault),
+            email: "test@example.com".to_string(),
+            password: Some(Zeroizing::new("a master password".to_string())),
+        });
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let (synced, _synced_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut saved = None;
+        let mut confirmed_servers = Vec::new();
+        let unlocked = AtomicBool::new(true);
+
+        handle(
+            Command::Cancel,
+            &mut session,
+            &mut saved,
+            &mut confirmed_servers,
+            &events,
+            &Notify::new(),
+            &unlocked,
+            &Arc::new(AtomicBool::new(false)),
+            &synced,
+        )
+        .await;
+
+        assert!(session.is_none());
+        assert!(!vault.is_unlocked());
+        assert!(!unlocked.load(Ordering::SeqCst));
+        assert!(matches!(received.try_recv(), Ok(Event::Locked)));
     }
 
     #[tokio::test]
