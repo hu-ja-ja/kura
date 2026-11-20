@@ -108,48 +108,48 @@ checksum = "sha256:0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40d
 url = "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe"
 
 [[tools.infisical]]
-version = "0.45.11"
+version = "0.45.13"
 backend = "github:Infisical/cli"
-specifiers = ["0.45.11"]
+specifiers = ["v0.45.13"]
 
 [tools.infisical.options]
 asset_pattern = "cli_{{ version }}_{{ os(macos='darwin') }}_{{ arch(x64='amd64') }}.tar.gz"
 
 [tools.infisical."platforms.linux-arm64"]
-checksum = "sha256:d7a3d687974c700c870a8a960f4c9a98a7ef82dc64c9dcbbe551d74d0e76c215"
+checksum = "sha256:1d9809856d3eec251cfbe566e3713bfcb7818c815c4010c31d81c2dbf93fafeb"
 checksum_source = "mise-versions"
-url = "https://github.com/Infisical/cli/releases/download/v0.45.11/cli_0.45.11_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/761342667"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.13/cli_0.45.13_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/769175455"
 
 [tools.infisical."platforms.linux-arm64-musl"]
-checksum = "sha256:d7a3d687974c700c870a8a960f4c9a98a7ef82dc64c9dcbbe551d74d0e76c215"
+checksum = "sha256:1d9809856d3eec251cfbe566e3713bfcb7818c815c4010c31d81c2dbf93fafeb"
 checksum_source = "mise-versions"
-url = "https://github.com/Infisical/cli/releases/download/v0.45.11/cli_0.45.11_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/761342667"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.13/cli_0.45.13_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/769175455"
 
 [tools.infisical."platforms.linux-x64"]
-checksum = "sha256:e9fcf1a41103fc64aed7801223cfe770c29bad67933e5349fbd01c038baea943"
+checksum = "sha256:a8e2cfd9069bbffb1eacc1da1eb079fffdd3033f23d2543334014f6f73032656"
 checksum_source = "mise-versions"
-url = "https://github.com/Infisical/cli/releases/download/v0.45.11/cli_0.45.11_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/761342658"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.13/cli_0.45.13_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/769175456"
 
 [tools.infisical."platforms.linux-x64-musl"]
-checksum = "sha256:e9fcf1a41103fc64aed7801223cfe770c29bad67933e5349fbd01c038baea943"
+checksum = "sha256:a8e2cfd9069bbffb1eacc1da1eb079fffdd3033f23d2543334014f6f73032656"
 checksum_source = "mise-versions"
-url = "https://github.com/Infisical/cli/releases/download/v0.45.11/cli_0.45.11_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/761342658"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.13/cli_0.45.13_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/769175456"
 
 [tools.infisical."platforms.macos-arm64"]
-checksum = "sha256:429edffc877b19b0c338ddd5e6aee0e02cf2f103ddb935e938782596a65b88d2"
+checksum = "sha256:92f82d7d0074e4dabd5dc6878d4413f5bf022a219e3076e2550a50649d775fda"
 checksum_source = "mise-versions"
-url = "https://github.com/Infisical/cli/releases/download/v0.45.11/cli_0.45.11_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/761331033"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.13/cli_0.45.13_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/769151178"
 
 [tools.infisical."platforms.windows-x64"]
-checksum = "sha256:30bbc173c2e8759f3039eb7937db4a4380c52c28a44022e4a44ad81e34faacf3"
+checksum = "sha256:6308f574bfe309ffa6a2b7bd1a9c1288920321771fc9c1b0a245fb0afaf00784"
 checksum_source = "mise-versions"
-url = "https://github.com/Infisical/cli/releases/download/v0.45.11/cli_0.45.11_windows_amd64.tar.gz"
-url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/761340548"
+url = "https://github.com/Infisical/cli/releases/download/v0.45.13/cli_0.45.13_windows_amd64.tar.gz"
+url_api = "https://api.github.com/repos/Infisical/cli/releases/assets/769159955"
 
 [[tools.jactionlint]]
 version = "2.6.0"
