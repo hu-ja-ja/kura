@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState, OtpEvent, OtpState, TextareaState};
@@ -12,7 +13,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use kura_core::{
-    CoreError, TwoFactorChallenge, TwoFactorMethod, VaultFilter, VaultItemDetail, VaultSnapshot,
+    CoreError, LoginFieldDraft, LoginFieldKind, TwoFactorChallenge, TwoFactorMethod, UriMatch,
+    VaultFilter, VaultItemDetail, VaultSnapshot,
 };
 use rust_i18n::t;
 use zeroize::Zeroizing;
@@ -28,6 +30,7 @@ use crate::settings::{Settings, ThemeChoice};
 #[cfg(debug_assertions)]
 pub(crate) mod demo;
 mod detail_view;
+mod editor_view;
 mod login;
 mod settings_view;
 #[cfg(test)]
@@ -47,6 +50,9 @@ pub(super) enum Problem {
 const NOTICE_TIME: Duration = Duration::from_secs(2);
 const ERROR_NOTICE_TIME: Duration = Duration::from_secs(6);
 const TOTP_RETRY_SECS: u32 = 5;
+/// Write generations stay unique across a recreated window, so a late answer
+/// cannot close a form opened in the new one.
+static NEXT_WRITE_GENERATION: AtomicU64 = AtomicU64::new(1);
 pub(super) type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 /// The confirmation for "forget the saved login". `reset_settings` is the
@@ -78,6 +84,52 @@ struct DetailPane {
     revealed: HashSet<String>,
     generation: u64,
     notes: Entity<TextareaState>,
+    focus: FocusHandle,
+}
+
+/// One URI row while the form is open. The entity owns the typed value.
+struct EditorUri {
+    uri: Entity<InputState>,
+    match_type: Option<UriMatch>,
+}
+
+/// One editable custom field. `base` keeps the source position of an existing
+/// field so Linked fields and their order survive the round trip.
+struct EditorField {
+    name: Entity<InputState>,
+    value: Entity<InputState>,
+    kind: LoginFieldKind,
+    base: Option<LoginFieldDraft>,
+}
+
+/// The add/edit form. It owns every input so closing or locking drops the
+/// draft, including the TOTP seed.
+struct EditorPane {
+    id: Option<String>,
+    revision: Option<String>,
+    generation: u64,
+    loading: bool,
+    saving: bool,
+    problem: Option<Problem>,
+    name: Entity<InputState>,
+    username: Entity<InputState>,
+    password: Entity<InputState>,
+    totp: Entity<InputState>,
+    notes: Entity<TextareaState>,
+    uris: Vec<EditorUri>,
+    fields: Vec<EditorField>,
+    folder_id: Option<String>,
+    favorite: bool,
+    focus: FocusHandle,
+    _name_subscription: Subscription,
+}
+
+/// The confirmation shown before moving an item to the trash.
+struct DeleteConfirm {
+    id: String,
+    generation: u64,
+    busy: bool,
+    problem: Option<Problem>,
     focus: FocusHandle,
 }
 
@@ -135,6 +187,9 @@ pub struct Root {
     capture_unavailable: bool,
     /// The open detail dialog and its derived state.
     detail: DetailPane,
+    /// The open add/edit form and the trash confirmation.
+    editor: Option<EditorPane>,
+    delete_confirm: Option<DeleteConfirm>,
     notice: Notice,
     challenge: Option<TwoFactorChallenge>,
     method: Option<TwoFactorMethod>,
@@ -347,6 +402,8 @@ impl Root {
                 notes,
                 focus: modal_focus,
             },
+            editor: None,
+            delete_confirm: None,
             notice: Notice::default(),
             challenge: None,
             method: None,
@@ -526,6 +583,75 @@ impl Root {
                     {
                         self.start_totp_ticks(cx);
                     }
+                }
+            }
+            Event::Editor { editor, generation } => {
+                let Some(pane) = self.editor.take() else {
+                    return;
+                };
+                if pane.id.as_deref() != Some(editor.id.as_str())
+                    || pane.generation != generation
+                    || !pane.loading
+                {
+                    self.editor = Some(pane);
+                    return;
+                }
+                let loaded = self.in_window(None, cx, move |window, cx| {
+                    let mut pane = pane;
+                    pane.load(*editor, window, cx);
+                    pane
+                });
+                self.editor = loaded;
+            }
+            Event::EditorFailed {
+                id,
+                generation,
+                err,
+            } => {
+                if self.editor.as_ref().is_some_and(|pane| {
+                    pane.loading
+                        && pane.generation == generation
+                        && pane.id.as_deref() == Some(id.as_str())
+                }) {
+                    self.editor = None;
+                    let problem = Problem::Core(err);
+                    self.show_notice(problem_text(Some(&problem)), true, cx);
+                }
+            }
+            Event::Saved(generation) => {
+                if self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|pane| pane.generation == generation)
+                {
+                    self.editor = None;
+                    self.focus_after_modal(None, cx);
+                    self.show_notice(t!("editor.saved").to_string(), false, cx);
+                }
+            }
+            Event::Deleted(generation) => {
+                if self
+                    .delete_confirm
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.generation == generation)
+                {
+                    self.delete_confirm = None;
+                    self.forget_detail(None, cx);
+                    self.focus_after_modal(None, cx);
+                    self.show_notice(t!("editor.deleted").to_string(), false, cx);
+                }
+            }
+            Event::WriteFailed { generation, err } => {
+                if let Some(pane) = self.editor.as_mut()
+                    && pane.generation == generation
+                {
+                    pane.saving = false;
+                    pane.problem = Some(Problem::Core(err));
+                } else if let Some(dialog) = self.delete_confirm.as_mut()
+                    && dialog.generation == generation
+                {
+                    dialog.busy = false;
+                    dialog.problem = Some(Problem::Core(err));
                 }
             }
             Event::PasswordCopied(result) => {
@@ -728,6 +854,8 @@ impl Root {
         self.confirm_server = None;
         self.filter = VaultFilter::All;
         self.snapshot = Arc::new(VaultSnapshot::default());
+        self.editor = None;
+        self.delete_confirm = None;
         self.forget_detail(window.as_deref_mut(), cx);
         self.clipboard
             .update(cx, |clipboard, cx| clipboard.clear(cx));
@@ -1271,6 +1399,14 @@ impl Render for Root {
             .then(|| self.render_settings(window, cx).into_any_element());
         let forget_login = (self.settings_open && self.forget_login.is_some())
             .then(|| self.render_forget_login(window, cx).into_any_element());
+        let editor = self
+            .editor
+            .is_some()
+            .then(|| self.render_editor(window, cx).into_any_element());
+        let delete = self
+            .delete_confirm
+            .is_some()
+            .then(|| self.render_delete_confirm(cx).into_any_element());
         let notice = self.notice.text.clone();
         let notice_color = if self.notice.error {
             cx.theme().danger
@@ -1290,6 +1426,8 @@ impl Render for Root {
             .when_some(modal, |this, modal| this.child(modal))
             .when_some(settings, |this, settings| this.child(settings))
             .when_some(forget_login, |this, forget_login| this.child(forget_login))
+            .when_some(editor, |this, editor| this.child(editor))
+            .when_some(delete, |this, delete| this.child(delete))
             .when_some(notice, |this, notice| {
                 this.child(
                     div()
@@ -1360,6 +1498,22 @@ fn handle_keystroke(
         if keystroke.key == "escape" {
             cx.stop_propagation();
             this.close_forget_login(window, cx);
+        }
+        return;
+    }
+
+    if this.delete_confirm.is_some() {
+        if keystroke.key == "escape" {
+            cx.stop_propagation();
+            this.close_delete_confirm(Some(window), cx);
+        }
+        return;
+    }
+
+    if this.editor.is_some() {
+        if keystroke.key == "escape" {
+            cx.stop_propagation();
+            this.close_editor(Some(window), cx);
         }
         return;
     }
@@ -1496,6 +1650,9 @@ pub(super) fn problem_text(problem: Option<&Problem>) -> String {
             CoreError::Timeout => t!("error.timeout").to_string(),
             CoreError::InvalidResponse => t!("error.invalid_response").to_string(),
             CoreError::NotFound => t!("error.not_found").to_string(),
+            CoreError::Conflict => t!("error.conflict").to_string(),
+            CoreError::NotEditable => t!("error.not_editable").to_string(),
+            CoreError::InvalidInput(_) => t!("error.invalid_input").to_string(),
             CoreError::NoTotp => t!("error.no_totp").to_string(),
             CoreError::NoPassword => t!("error.no_password").to_string(),
             CoreError::Server(message) => {

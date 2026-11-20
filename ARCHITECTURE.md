@@ -86,8 +86,8 @@ Two public items in `kura-core` expose SDK value types:
   it; the vault engine and its tests do.
 
 Apart from `SavedSession`, the UI names only Kura types: `Vault`,
-`VaultSnapshot`, `VaultItem`, `VaultItemDetail`, `LoginOutcome`,
-`TwoFactorChallenge`, `CoreError`.
+`VaultSnapshot`, `VaultItem`, `VaultItemDetail`, `LoginDraft`, `LoginEditor`,
+`LoginOutcome`, `TwoFactorChallenge`, `CoreError`.
 
 ## Layer Architecture
 
@@ -151,15 +151,21 @@ server; switching either builds a new one.
   parameters,
 - the identity and API endpoints.
 
-`Vault::restore` installs the tokens into the SDK state, initializes user
-crypto with `InitUserCryptoMethod::MasterPasswordUnlock`, and restores the
-`USER_LOGIN_METHOD` that `initialize_user_crypto` overwrites with an empty
-client id. The refresh request needs the password login method.
+`Vault::restore` installs the tokens into the SDK state, installs the password
+`USER_LOGIN_METHOD` before any authenticated request, initializes user crypto
+with `InitUserCryptoMethod::MasterPasswordUnlock`, and restores that method
+again if `initialize_user_crypto` overwrites it. The refresh request needs the
+password login method.
 
 `Vault::saved_session` derives the master key again after a sign-in, wraps the
-user key, and collects the private key and login method. `update_saved_tokens`
-copies renewed tokens back into the saved session. The file itself is DPAPI
-sealed by `kura-app`; `kura-core` only produces and accepts the struct.
+user key, and collects the private key and login method. A sign-in also fetches
+the server's account id from `/accounts/profile`; writes need that id, and it
+is saved with the session. A session file from before writes has no confirmed
+id, so its next restore asks the profile endpoint once; offline unlock still
+works with the stored id, but writes stay unavailable until an online restore
+confirms the server id. `update_saved_tokens` copies renewed tokens back into
+the saved session. The file itself is DPAPI sealed by `kura-app`; `kura-core`
+only produces and accepts the struct.
 
 ### Sync
 
@@ -191,6 +197,87 @@ because Kura does not match them.
 - `totp` generates the current code from the stored seed without returning the
   seed.
 - `password` returns a `Zeroizing<String>` for the list's copy button.
+- `editor` decrypts one login only when the user starts editing. The TOTP
+  seed is not kept by an ordinary detail view.
+- `create_login`, `edit_login`, and `delete_login` are the only write paths.
+  An edit syncs, compares the revision the form opened with, and only then
+  builds `CipherEditRequest` from a fresh `CipherView`. Deleted items use
+  `soft_delete`, never permanent deletion.
+
+### Writes
+
+- Only login items are writable. Cards, identities, notes, SSH keys, passkeys,
+  attachments, organizations, and collections stay display-only or preserved.
+- Edit uses `edit` permission; delete uses the separate `permissions.delete`
+  when the server supplies it. Master-password-reprompt items are read-only
+  until a reprompt flow exists.
+- Strict cipher field decryption is enabled after authentication and on
+  restore. A legacy item with an unreadable field cannot be opened for editing
+  and then saved with that field erased.
+- The draft owns name, username, password, TOTP seed, URIs and match rules,
+  notes, folder, favorite, and text/hidden/boolean custom fields.
+- Linked custom fields, passkeys, attachments, autofill settings, archived
+  state, key material, and organization data are preserved by starting from a
+  fresh view and changing only the form-owned fields. Empty custom fields stay
+  untouched, and URI text is preserved exactly.
+- A no-op edit returns before the PUT. A stale revision is `Conflict`; only an
+  edit 400/409 whose message names stale data is mapped to `Conflict`. Another
+  validation error keeps the server's own message.
+- A server-side stale rejection forces a full sync before the form is left
+  open, so reopening the editor sees the new local revision.
+- A delete 404 is idempotent success. A locally missing ID is treated as
+  already gone without sending its unknown type through the login delete API.
+- Sync and writes take the write side of one operation read/write lock;
+  snapshot takes the read side. Worker snapshot publication is interruptible
+  by lock. A write is never cancelled: the worker waits for it, and the queued
+  lock then clears the keys, so a lock cannot lose the answer from the server.
+
+The diagram shows the edit path from the form to the published snapshot. The
+bullets above remain the rules: create skips the pre-save sync and revision
+comparison and sends `create` instead of `PUT`; a delete of a locally missing
+ID finishes without a request, and `soft_delete` treats 404 as success.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor User
+  participant UI as Kura window
+  participant W as Backend worker
+  participant V as Vault
+  participant SDK as Bitwarden SDK
+  participant S as Server
+
+  User->>UI: Save
+  Note over UI: Form becomes read-only
+  UI->>W: Command::Save(draft, id, revision)
+  W->>V: edit_login
+  V->>V: lock operation write lock
+  V->>SDK: pre-save sync
+  alt revision differs
+    V-->>W: Conflict
+  else draft unchanged
+    V-->>W: Ok without PUT
+  else changed
+    V->>SDK: edit with a fresh view and the draft
+    SDK->>S: PUT /ciphers/{id}
+    alt stale 400/409
+      V->>SDK: force sync
+      V-->>W: Conflict
+    else 2xx
+      V-->>W: Ok
+    else other error
+      V-->>W: error
+    end
+  end
+  W-->>UI: Event::Saved or WriteFailed
+  W->>V: snapshot()
+  W-->>UI: Event::Snapshot
+  Note over UI: Failure keeps the form and its input
+```
+
+A lock interrupts snapshot publication and prevents new commands. An in-flight
+write is allowed to finish; the queued Lock then clears the keys. Cancelling a
+write future could hide a request the server already committed.
 
 ### Error Mapping
 
@@ -362,6 +449,17 @@ background sync in step 4 does use the network.
   code.
 - Copying puts the value on the clipboard and starts the wipe timer.
 
+### Write
+
+- The add form starts with an empty login draft; Edit asks the worker for the
+  decrypted draft, including the TOTP seed, and the revision at that moment.
+- The worker serializes the save with sync in `kura-core`. A conflict leaves
+  the form and its values open. A successful save publishes a fresh snapshot.
+- Delete asks for confirmation, then calls soft delete. A failure keeps the
+  confirmation and its message on screen.
+- Locking during a request cancels the UI wait and drops the form. A request
+  that already reached the server is reconciled by the next sync.
+
 ### Lock
 
 1. A manual lock, tray action, idle timer, session lock, or suspend sends
@@ -401,8 +499,8 @@ clipboard contents. There is no offline vault cache yet; every unlock syncs.
   to the current Windows user. The file is safe against another account, a
   backup, or another machine, not against code already running as the user.
 - Passwords, notes, card numbers, SSNs, SSH private keys, and custom field
-  values are wrapped in `Zeroizing`. The decrypted detail is dropped when the
-  dialog closes or the vault locks.
+  values are wrapped in `Zeroizing`. The decrypted detail, edit draft, and TOTP
+  seed are dropped when the dialog closes or the vault locks.
 - Crash dumps are disabled before the vault can open. Logs, crash reports, and
   settings never contain a password, token, email, item value, or server
   response body.
@@ -457,13 +555,21 @@ the bundled license list.
 
 - `Backend::detached` and `Platform::detached` keep the UI runnable without a
   worker or a tray.
-- UI tests drive a real headless GPUI window. Backend commands are dropped, so
-  they cover labels, dialogs, filtering, and key handling only.
+- UI tests drive a real headless GPUI window. Most use a detached backend that
+  drops commands, so they cover labels, dialogs, filtering, and key handling.
+  `Backend::recording` keeps the commands for form and confirmation tests.
 - `kura-dist` integration tests use a loopback HTTP feed.
 - `--demo` opens a fictional vault in a debug build; the `screenshots` feature
   captures the client area for the README.
 - `mise run lint` runs formatting and clippy. `cargo test` runs the workspace
   tests. `mise run audit` checks dependencies for advisories.
+- `write.rs` tests cover the protocol matrix and all 90 start/apply schedules.
+  A vault test holds the real operation write lock and checks that sync,
+  snapshot, and writes wait for it. `mise run test:mutants` targets the write
+  paths.
+- `mise run test:live` runs ignored tests against a loopback Vaultwarden. The
+  tests refuse non-loopback URLs. CI runs the same test on Linux against a
+  Vaultwarden service container.
 
 ## Current Constraints
 
@@ -484,7 +590,7 @@ would remove it.
 ### Kura Implementation
 
 - No offline vault cache. Every unlock syncs.
-- The vault is read-only: items cannot be added, edited, or deleted.
+- Only login items can be written; other item kinds are display-only.
 - One account at a time.
 - No custom CA certificates or client certificates.
 
@@ -515,11 +621,13 @@ Links are relative to the repository root.
 | --- | --- |
 | App entry, logging, runtime, GPUI setup | [main.rs](crates/kura-app/src/main.rs), [logging.rs](crates/kura-app/src/logging.rs) |
 | Window lifecycle, tray actions, update window routing | [controller.rs](crates/kura-app/src/controller.rs) |
-| UI screens and dialogs | [app/mod.rs](crates/kura-app/src/app/mod.rs), [app/login.rs](crates/kura-app/src/app/login.rs), [app/vault_view.rs](crates/kura-app/src/app/vault_view.rs), [app/detail_view.rs](crates/kura-app/src/app/detail_view.rs), [app/settings_view.rs](crates/kura-app/src/app/settings_view.rs) |
+| UI screens and dialogs | [app/mod.rs](crates/kura-app/src/app/mod.rs), [app/login.rs](crates/kura-app/src/app/login.rs), [app/vault_view.rs](crates/kura-app/src/app/vault_view.rs), [app/detail_view.rs](crates/kura-app/src/app/detail_view.rs), [app/editor_view.rs](crates/kura-app/src/app/editor_view.rs), [app/settings_view.rs](crates/kura-app/src/app/settings_view.rs) |
 | Vault list and virtual scrolling | [list.rs](crates/kura-app/src/list.rs) |
 | Detail rows | [detail.rs](crates/kura-app/src/detail.rs) |
 | UI-to-SDK bridge, commands, events, worker | [backend.rs](crates/kura-app/src/backend.rs) |
-| Vault engine, login, restore, sync, lock | [vault.rs](crates/kura-core/src/vault.rs) |
+| Vault engine, login, restore, sync, lock, writes | [vault.rs](crates/kura-core/src/vault.rs) |
+| Login drafts, request building, write tests | [write.rs](crates/kura-core/src/write.rs) |
+| Live Vaultwarden tests | [vault/live.rs](crates/kura-core/src/vault/live.rs) |
 | SDK models to Kura models | [model.rs](crates/kura-core/src/model.rs) |
 | Search and filters | [search.rs](crates/kura-core/src/search.rs) |
 | Server URL resolution | [server.rs](crates/kura-core/src/server.rs) |
