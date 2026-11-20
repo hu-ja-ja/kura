@@ -61,6 +61,17 @@ impl Root {
                     .gap_2()
                     .when(self.page == Page::Vault, |this| {
                         this.child(
+                            Button::new("add-item")
+                                .secondary()
+                                .compact()
+                                .icon(AssetIcon::Plus)
+                                .label(t!("vault.add"))
+                                .accessibility_label(t!("vault.add"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_new_item(window, cx)
+                                })),
+                        )
+                        .child(
                             Button::new("sync")
                                 .ghost()
                                 .compact()

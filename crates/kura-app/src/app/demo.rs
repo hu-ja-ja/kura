@@ -330,6 +330,8 @@ fn sample(lang: &str) -> (VaultSnapshot, VaultItemDetail) {
         id: "github".to_string(),
         name: "GitHub".to_string(),
         kind: ItemKind::Login,
+        can_edit: true,
+        can_delete: true,
         favorite: true,
         folder_id: Some("development".to_string()),
         username: Some("haru.dev".to_string()),

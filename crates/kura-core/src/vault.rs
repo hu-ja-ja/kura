@@ -3,7 +3,9 @@
 //! Wraps the Bitwarden SDK so the UI never sees SDK types and never blocks on
 //! the network.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bitwarden_core::auth::login::PreloginError;
@@ -25,8 +27,12 @@ use bitwarden_core::{ApiError, ClientSettings, FromClient, UserId};
 use bitwarden_crypto::{MasterKey, SymmetricCryptoKey};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::{SyncClient, SyncError, SyncRequest};
-use bitwarden_vault::{CipherId, CipherView, FolderSyncHandler, GetCipherError};
+use bitwarden_vault::{
+    Cipher, CipherId, CipherView, CreateCipherError, DeleteCipherError, EditCipherError,
+    FolderSyncHandler, GetCipherError,
+};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 
@@ -34,9 +40,14 @@ use crate::cipher_sync::CipherSyncHandler;
 use crate::error::CoreError;
 use crate::model::{TotpCode, VaultItemDetail, VaultSnapshot};
 use crate::server::{client_settings, settings_from_urls};
+use crate::write::{
+    LoginDraft, LoginEditor, build_create_request, build_edit_request, draft_is_unchanged,
+    editor_from_view, revision_matches,
+};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const SYNC_TIMEOUT: Duration = Duration::from_secs(60);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Which step of the login produced an error. The same server answer means
 /// different things in each step.
@@ -73,6 +84,12 @@ pub struct Vault {
     sync: SyncClient,
     identity_url: String,
     api_url: String,
+    /// Sync and every write take this lock. A stale sync response must not run
+    /// between a write's revision check and its commit.
+    operations: Mutex<()>,
+    /// Whether the installed user id came from the server profile rather than
+    /// an older saved file's generated id.
+    user_id_confirmed: AtomicBool,
 }
 
 /// Everything needed to open the vault again with only the master password.
@@ -89,6 +106,10 @@ pub struct SavedSession {
     pub tokens: AuthenticationTokens,
     pub crypto_state: WrappedAccountCryptographicState,
     pub unlock: MasterPasswordUnlockData,
+    /// Older files stored a generated id. Writes need the server's id, so a
+    /// restore of such a file asks the profile endpoint once.
+    #[serde(default)]
+    pub user_id_confirmed: bool,
 }
 
 impl SavedSession {
@@ -141,6 +162,8 @@ impl Vault {
             sync,
             identity_url,
             api_url,
+            operations: Mutex::new(()),
+            user_id_confirmed: AtomicBool::new(false),
         })
     }
 
@@ -165,6 +188,27 @@ impl Vault {
             .set(saved.tokens.clone())
             .await
             .map_err(|_| CoreError::Internal("install the saved tokens"))?;
+        vault.enable_strict_decryption().await;
+        vault
+            .install_password_login_method(&saved.unlock.salt, &saved.unlock.kdf)
+            .await?;
+        let mut confirmed = saved.user_id_confirmed;
+        let user_id = if confirmed {
+            saved.user_id
+        } else {
+            // A saved file from before writes only has the generated id.
+            // Offline unlock still works, but never mark the generated id as
+            // confirmed: a later online start can still upgrade it.
+            match vault.profile_user_id().await {
+                Ok(user_id) => {
+                    confirmed = true;
+                    user_id
+                }
+                Err(_) => saved.user_id,
+            }
+        };
+        vault.install_user_id(user_id).await?;
+        vault.user_id_confirmed.store(confirmed, Ordering::SeqCst);
 
         vault.unlock(saved, password).await?;
 
@@ -180,7 +224,13 @@ impl Vault {
             .0
             .crypto()
             .initialize_user_crypto(InitUserCryptoRequest {
-                user_id: Some(saved.user_id),
+                user_id: Some(
+                    self.client
+                        .0
+                        .internal
+                        .get_user_id()
+                        .unwrap_or(saved.user_id),
+                ),
                 kdf_params: saved.unlock.kdf.clone(),
                 email: saved.unlock.salt.clone(),
                 account_cryptographic_state: saved.crypto_state.clone(),
@@ -196,6 +246,17 @@ impl Vault {
         // `initialize_user_crypto` records a login method with an empty client
         // id. The token middleware copies that id into every refresh request,
         // so put back the one a password sign-in uses.
+        self.install_password_login_method(&saved.unlock.salt, &saved.unlock.kdf)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn install_password_login_method(
+        &self,
+        email: &str,
+        kdf: &bitwarden_crypto::Kdf,
+    ) -> Result<(), CoreError> {
         self.client
             .0
             .platform()
@@ -203,13 +264,24 @@ impl Vault {
             .value::<USER_LOGIN_METHOD>()
             .set(UserLoginMethod::Username {
                 client_id: "web".to_string(),
-                email: saved.unlock.salt.clone(),
-                kdf: saved.unlock.kdf.clone(),
+                email: email.to_string(),
+                kdf: kdf.clone(),
             })
             .await
-            .map_err(|_| CoreError::Internal("install the login method"))?;
+            .map_err(|_| CoreError::Internal("install the login method"))
+    }
 
-        Ok(())
+    async fn enable_strict_decryption(&self) {
+        // Writing re-encrypts the whole view. Lenient field decryption would
+        // turn a corrupt note or field into an empty one and then save it.
+        self.client
+            .0
+            .flags()
+            .load(HashMap::from([(
+                "strict-cipher-decryption".to_string(),
+                true,
+            )]))
+            .await;
     }
 
     /// Drop the keys but keep the client and its encrypted items for the next
@@ -285,12 +357,21 @@ impl Vault {
             .map_err(|_| CoreError::Internal("convert the user key"))?;
         let master_key = MasterKey::derive(password, &salt, &kdf)
             .map_err(|_| CoreError::Internal("derive the master key"))?;
+        if !self.user_id_confirmed.load(Ordering::SeqCst) {
+            return Err(CoreError::Internal("the saved user id is not confirmed"));
+        }
+        // A restore has to install the same id the sign-in installed. The
+        // sign-in response has no id, so Kura fetched it from the profile.
+        let user_id = self
+            .client
+            .0
+            .internal
+            .get_user_id()
+            .ok_or(CoreError::Internal("read the user id"))?;
 
         Ok(SavedSession {
             email: email.trim().to_string(),
-            // A restore needs an id for the SDK's per-user local state, but the
-            // sign-in response carries none and nothing else reads it.
-            user_id: UserId::new_v4(),
+            user_id,
             identity_url: self.identity_url.clone(),
             api_url: self.api_url.clone(),
             tokens,
@@ -303,11 +384,67 @@ impl Vault {
                     .map_err(|_| CoreError::Internal("wrap the user key"))?,
                 contained_key_id: None,
             },
+            user_id_confirmed: true,
         })
     }
 
     pub fn is_unlocked(&self) -> bool {
         self.client.is_unlocked()
+    }
+
+    #[cfg(test)]
+    async fn hold_operations(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.operations.lock().await
+    }
+
+    /// Copy the server's user id into an older saved file after a restore.
+    /// Returns whether the file changed.
+    pub fn confirm_saved_user_id(&self, saved: &mut SavedSession) -> bool {
+        if !self.user_id_confirmed.load(Ordering::SeqCst) {
+            return false;
+        }
+        let Some(user_id) = self.client.0.internal.get_user_id() else {
+            return false;
+        };
+        if saved.user_id_confirmed && saved.user_id == user_id {
+            return false;
+        }
+        saved.user_id = user_id;
+        saved.user_id_confirmed = true;
+        true
+    }
+
+    /// The write clients need the per-user id the sign-in response omits.
+    async fn install_user_id(&self, user_id: UserId) -> Result<(), CoreError> {
+        if self.client.0.internal.get_user_id().is_some() {
+            return Ok(());
+        }
+        self.client
+            .0
+            .internal
+            .init_user_id(user_id)
+            .await
+            .map_err(|_| CoreError::Internal("install the user id"))
+    }
+
+    async fn profile_user_id(&self) -> Result<UserId, CoreError> {
+        let profile = timeout(
+            LOGIN_TIMEOUT,
+            self.client
+                .0
+                .internal
+                .get_api_configurations()
+                .api_client
+                .accounts_api()
+                .get_profile(),
+        )
+        .await
+        .map_err(|_| CoreError::Timeout)?
+        .map_err(|err| map_api_error(&err))?;
+        profile
+            .id
+            .map(UserId::new)
+            .ok_or(CoreError::InvalidResponse)
     }
 
     /// Log in with the master password. The account may ask for a second factor.
@@ -324,7 +461,13 @@ impl Vault {
         .map_err(|_| CoreError::Timeout)?
         .map_err(|err| map_login_error(err, Step::Initial))?;
 
-        self.read_login_response(response)
+        let outcome = self.read_login_response(response)?;
+        if matches!(&outcome, LoginOutcome::LoggedIn) {
+            self.enable_strict_decryption().await;
+            self.install_user_id(self.profile_user_id().await?).await?;
+            self.user_id_confirmed.store(true, Ordering::SeqCst);
+        }
+        Ok(outcome)
     }
 
     /// Answer the second factor challenge.
@@ -357,7 +500,12 @@ impl Vault {
         .map_err(|err| map_login_error(err, Step::TwoFactor))?;
 
         match self.read_login_response(response)? {
-            LoginOutcome::LoggedIn => Ok(()),
+            LoginOutcome::LoggedIn => {
+                self.enable_strict_decryption().await;
+                self.install_user_id(self.profile_user_id().await?).await?;
+                self.user_id_confirmed.store(true, Ordering::SeqCst);
+                Ok(())
+            }
             LoginOutcome::TwoFactorRequired(_) => Err(CoreError::TwoFactorFailed),
         }
     }
@@ -383,6 +531,11 @@ impl Vault {
     /// Returns whether a sync was performed; false means the vault was already
     /// up to date.
     pub async fn sync(&self, force: bool) -> Result<bool, CoreError> {
+        let _operations = self.operations.lock().await;
+        self.sync_locked(force).await
+    }
+
+    async fn sync_locked(&self, force: bool) -> Result<bool, CoreError> {
         timeout(
             SYNC_TIMEOUT,
             self.sync.sync(SyncRequest {
@@ -396,8 +549,166 @@ impl Vault {
         .map_err(map_sync_error)
     }
 
+    /// The form values for one login, decrypted only when editing starts.
+    pub async fn editor(&self, id: &str) -> Result<LoginEditor, CoreError> {
+        if !self.is_unlocked() {
+            return Err(CoreError::Internal("edit without an open vault"));
+        }
+        let view = self.cipher_view(id).await?;
+        ensure_editable(&view)?;
+        editor_from_view(view)
+    }
+
+    /// Create a login. The editor shows the new item only after a successful
+    /// answer, so an offline save leaves the vault unchanged.
+    pub async fn create_login(&self, draft: &LoginDraft) -> Result<String, CoreError> {
+        let _operations = self.operations.lock().await;
+        if !self.is_unlocked() {
+            return Err(CoreError::Internal("create without an open vault"));
+        }
+        if !self.user_id_confirmed.load(Ordering::SeqCst) {
+            return Err(CoreError::Internal(
+                "create before the user id was confirmed",
+            ));
+        }
+        self.ensure_folder(draft).await?;
+        let request = build_create_request(draft)?;
+        // shortcut: if the connection drops after the server commits, a retry
+        // can create a duplicate. The SDK exposes no idempotency key.
+        let view = timeout(WRITE_TIMEOUT, self.client.vault().ciphers().create(request))
+            .await
+            .map_err(|_| CoreError::Timeout)?
+            .map_err(map_create_error)?;
+        view.id
+            .map(|id| id.to_string())
+            .ok_or(CoreError::Internal("the created item has no id"))
+    }
+
+    /// Edit a login against the revision the form was opened with.
+    ///
+    /// A sync runs before the comparison. The write stays under the same lock,
+    /// so a background sync cannot slip a different revision in between.
+    pub async fn edit_login(
+        &self,
+        id: &str,
+        opened_revision: &str,
+        draft: &LoginDraft,
+    ) -> Result<(), CoreError> {
+        let _operations = self.operations.lock().await;
+        if !self.is_unlocked() {
+            return Err(CoreError::Internal("edit without an open vault"));
+        }
+        if !self.user_id_confirmed.load(Ordering::SeqCst) {
+            return Err(CoreError::Internal("edit before the user id was confirmed"));
+        }
+        self.sync_locked(false).await?;
+        let view = self.cipher_view(id).await?;
+        ensure_editable(&view)?;
+        if !revision_matches(&view, opened_revision) {
+            return Err(CoreError::Conflict);
+        }
+        self.ensure_folder(draft).await?;
+        if draft_is_unchanged(&view, draft) {
+            return Ok(());
+        }
+        let request = build_edit_request(view, draft)?;
+        let result = timeout(WRITE_TIMEOUT, self.client.vault().ciphers().edit(request))
+            .await
+            .map_err(|_| CoreError::Timeout)?;
+        if matches!(&result, Err(EditCipherError::Api(err)) if is_stale_revision(err)) {
+            // The server changed after the pre-save sync. Refresh the local
+            // copy so reopening the editor does not conflict again.
+            let _ = self.sync_locked(true).await;
+            return Err(CoreError::Conflict);
+        }
+        result.map_err(map_edit_error)?;
+        Ok(())
+    }
+
+    /// Move a login to the trash. A server 404 means the item is already gone,
+    /// so the local copy is removed and the request succeeds.
+    pub async fn delete_login(&self, id: &str) -> Result<(), CoreError> {
+        let _operations = self.operations.lock().await;
+        if !self.is_unlocked() {
+            return Err(CoreError::Internal("delete without an open vault"));
+        }
+        if !self.user_id_confirmed.load(Ordering::SeqCst) {
+            return Err(CoreError::Internal(
+                "delete before the user id was confirmed",
+            ));
+        }
+        let id: CipherId = id.parse().map_err(|_| CoreError::NotFound)?;
+        match self.client.vault().ciphers().get(id).await {
+            Ok(view) if view.deleted_date.is_some() => return Ok(()),
+            Ok(view) => ensure_deletable(&view)?,
+            // A missing local copy could be an unsynced card or note. Do not
+            // send its ID through the login-only delete path.
+            Err(GetCipherError::ItemNotFound(_)) => return Ok(()),
+            Err(err) => return Err(map_get_error(err)),
+        }
+
+        match timeout(WRITE_TIMEOUT, self.client.vault().ciphers().soft_delete(id))
+            .await
+            .map_err(|_| CoreError::Timeout)?
+        {
+            Ok(()) => Ok(()),
+            Err(err) => match classify_delete_failure(err) {
+                DeleteFailure::AlreadyGone => {
+                    // The server already dropped it. A stale local row is
+                    // harmless and the next sync will remove it.
+                    let _ = self.remove_cipher(id).await;
+                    Ok(())
+                }
+                DeleteFailure::Failed(err) => Err(map_delete_error(err)),
+            },
+        }
+    }
+
+    async fn remove_cipher(&self, id: CipherId) -> Result<(), CoreError> {
+        self.client
+            .0
+            .platform()
+            .state()
+            .get::<Cipher>()
+            .map_err(|_| CoreError::Internal("open the cipher repository"))?
+            .remove(id)
+            .await
+            .map_err(|_| CoreError::Internal("remove the deleted item"))
+    }
+
+    async fn ensure_folder(&self, draft: &LoginDraft) -> Result<(), CoreError> {
+        let Some(id) = draft
+            .folder_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            return Ok(());
+        };
+        let _: bitwarden_vault::FolderId = id
+            .parse()
+            .map_err(|_| CoreError::InvalidInput("item folder"))?;
+        let folders = self
+            .client
+            .vault()
+            .folders()
+            .list()
+            .await
+            .map_err(|_| CoreError::Internal("read the folders before saving"))?;
+        if folders.iter().any(|folder| {
+            folder
+                .id
+                .is_some_and(|folder_id| folder_id.to_string() == id)
+        }) {
+            Ok(())
+        } else {
+            Err(CoreError::InvalidInput("item folder"))
+        }
+    }
+
     /// The current list of items, decrypted and ready to show.
     pub async fn snapshot(&self) -> Result<VaultSnapshot, CoreError> {
+        let _operations = self.operations.lock().await;
         // `list` decrypts only the list fields. That helps items in the old
         // field-level format; a blob-format item is unsealed whole anyway.
         let decrypted = self
@@ -457,7 +768,7 @@ impl Vault {
         let view = self.cipher_view(id).await?;
         view.login
             .and_then(|login| login.password)
-            .filter(|password| !password.trim().is_empty())
+            .filter(|password| !password.is_empty())
             .map(Zeroizing::new)
             .ok_or(CoreError::NoPassword)
     }
@@ -553,6 +864,106 @@ fn map_get_error(err: GetCipherError) -> CoreError {
     }
 }
 
+fn login_view_is_writable(view: &CipherView) -> bool {
+    view.r#type == bitwarden_vault::CipherType::Login
+        && view.login.is_some()
+        && !view.partial
+        && view.deleted_date.is_none()
+}
+
+fn ensure_editable(view: &CipherView) -> Result<(), CoreError> {
+    if view.deleted_date.is_some() {
+        return Err(CoreError::NotFound);
+    }
+    if !login_view_is_writable(view)
+        || !view.edit
+        || view.reprompt != bitwarden_vault::CipherRepromptType::None
+    {
+        return Err(CoreError::NotEditable);
+    }
+    Ok(())
+}
+
+fn ensure_deletable(view: &CipherView) -> Result<(), CoreError> {
+    if view.deleted_date.is_some() {
+        return Err(CoreError::NotFound);
+    }
+    let permitted = view
+        .permissions
+        .as_ref()
+        .map_or(view.edit, |permissions| permissions.delete);
+    if !login_view_is_writable(view) || !permitted {
+        return Err(CoreError::NotEditable);
+    }
+    Ok(())
+}
+
+fn api_status(err: &ApiError) -> Option<u16> {
+    match err {
+        ApiError::Response(content) => Some(content.status.as_u16()),
+        _ => None,
+    }
+}
+
+fn is_stale_revision(err: &ApiError) -> bool {
+    let ApiError::Response(content) = err else {
+        return false;
+    };
+    if !matches!(content.status.as_u16(), 400 | 409) {
+        return false;
+    }
+    let message = content.message.to_ascii_lowercase();
+    message.contains("out of date") || message.contains("revision date")
+}
+
+enum DeleteFailure {
+    AlreadyGone,
+    Failed(DeleteCipherError),
+}
+
+fn classify_delete_failure(err: DeleteCipherError) -> DeleteFailure {
+    if matches!(&err, DeleteCipherError::Api(api) if api_status(api) == Some(404)) {
+        DeleteFailure::AlreadyGone
+    } else {
+        DeleteFailure::Failed(err)
+    }
+}
+
+fn map_create_error(err: CreateCipherError) -> CoreError {
+    match err {
+        CreateCipherError::Api(err) => map_api_error(&err),
+        CreateCipherError::MissingField(_) => CoreError::InvalidInput("item field"),
+        CreateCipherError::NotAuthenticated(_) => CoreError::Rejected("not signed in".to_string()),
+        CreateCipherError::Crypto(_)
+        | CreateCipherError::VaultParse(_)
+        | CreateCipherError::Repository(_) => CoreError::Internal("create the item"),
+    }
+}
+
+fn map_edit_error(err: EditCipherError) -> CoreError {
+    match err {
+        EditCipherError::ItemNotFound(_) => CoreError::NotFound,
+        EditCipherError::Api(err) if is_stale_revision(&err) => CoreError::Conflict,
+        EditCipherError::Api(err) => map_api_error(&err),
+        EditCipherError::MissingField(_) | EditCipherError::GatedCipher => {
+            CoreError::InvalidInput("item field")
+        }
+        EditCipherError::PartialOriginal => CoreError::NotEditable,
+        EditCipherError::NotAuthenticated(_) => CoreError::Rejected("not signed in".to_string()),
+        EditCipherError::Crypto(_)
+        | EditCipherError::VaultParse(_)
+        | EditCipherError::Repository(_)
+        | EditCipherError::Uuid(_) => CoreError::Internal("edit the item"),
+    }
+}
+
+fn map_delete_error(err: DeleteCipherError) -> CoreError {
+    match err {
+        DeleteCipherError::Api(err) => map_api_error(&err),
+        DeleteCipherError::Repository(_) => CoreError::Internal("mark the item deleted"),
+    }
+}
+
 fn map_sync_error(err: SyncError) -> CoreError {
     match err {
         SyncError::Api(api) => map_api_error(&api),
@@ -607,6 +1018,9 @@ fn response_detail(body: &str) -> String {
         body.chars().take(MAX).collect()
     }
 }
+
+#[cfg(test)]
+mod live;
 
 #[cfg(test)]
 mod tests {
@@ -666,6 +1080,7 @@ mod tests {
             "type": 1,
             "login": {
                 "username": "octocat",
+                "password": "   ",
                 "uris": [{ "uri": "https://github.com" }]
             },
             "favorite": false,
@@ -717,6 +1132,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_whitespace_only_password_can_still_be_read() {
+        let vault = Vault::restore(&saved_session(), PASSWORD).await.unwrap();
+        add_login(&vault).await;
+        let id = "22222222-2222-2222-2222-222222222222";
+
+        assert_eq!(vault.password(id).await.unwrap().as_str(), "   ");
+        assert_eq!(
+            vault
+                .detail(id)
+                .await
+                .unwrap()
+                .password
+                .as_deref()
+                .map(String::as_str),
+            Some("   ")
+        );
+    }
+
+    #[tokio::test]
     async fn a_malformed_item_id_is_not_found() {
         let vault = Vault::connect(None).unwrap();
         assert_eq!(
@@ -729,6 +1163,190 @@ mod tests {
         );
         assert_eq!(
             vault.password("not-a-uuid").await.err(),
+            Some(CoreError::NotFound)
+        );
+    }
+
+    fn api_response(status: u16, message: &str) -> ApiError {
+        ApiError::Response(
+            serde_json::from_value(serde_json::json!({
+                "status": status,
+                "message": message
+            }))
+            .expect("the API response fixture deserializes"),
+        )
+    }
+
+    #[test]
+    fn write_error_mapping_keeps_conflicts_and_idempotent_deletes() {
+        assert_eq!(api_status(&api_response(404, "gone")), Some(404));
+        assert!(matches!(
+            classify_delete_failure(DeleteCipherError::Api(api_response(404, "gone"))),
+            DeleteFailure::AlreadyGone
+        ));
+        assert!(matches!(
+            classify_delete_failure(DeleteCipherError::Api(api_response(500, "boom"))),
+            DeleteFailure::Failed(_)
+        ));
+        assert!(matches!(
+            classify_delete_failure(DeleteCipherError::Repository(
+                bitwarden_state::repository::RepositoryError::Internal("test".to_string())
+            )),
+            DeleteFailure::Failed(_)
+        ));
+
+        assert_eq!(
+            map_edit_error(EditCipherError::Api(api_response(
+                400,
+                "The client copy of this cipher is out of date. Resync the client and try again."
+            ))),
+            CoreError::Conflict
+        );
+        assert_eq!(
+            map_edit_error(EditCipherError::Api(api_response(
+                400,
+                "The field Notes exceeds the maximum length"
+            ))),
+            CoreError::Rejected("The field Notes exceeds the maximum length".to_string())
+        );
+        assert_eq!(
+            map_edit_error(EditCipherError::Api(api_response(403, "no"))),
+            CoreError::Rejected("no".to_string())
+        );
+        assert_eq!(
+            map_edit_error(EditCipherError::ItemNotFound(
+                bitwarden_vault::ItemNotFoundError
+            )),
+            CoreError::NotFound
+        );
+    }
+
+    #[test]
+    fn only_a_writable_login_passes_the_write_guard() {
+        fn view() -> CipherView {
+            serde_json::from_value(serde_json::json!({
+                "id": "22222222-2222-2222-2222-222222222222",
+                "organizationId": null,
+                "folderId": null,
+                "collectionIds": [],
+                "key": null,
+                "name": "GitHub",
+                "notes": null,
+                "type": 1,
+                "login": { "username": "octocat", "password": "secret" },
+                "favorite": false,
+                "reprompt": 0,
+                "organizationUseTotp": false,
+                "edit": true,
+                "viewPassword": true,
+                "creationDate": "2026-01-01T00:00:00Z",
+                "revisionDate": "2026-01-01T00:00:00Z"
+            }))
+            .unwrap()
+        }
+
+        assert_eq!(ensure_editable(&view()), Ok(()));
+        assert_eq!(ensure_deletable(&view()), Ok(()));
+
+        let mut deleted = view();
+        deleted.deleted_date = Some(deleted.revision_date);
+        assert_eq!(ensure_editable(&deleted), Err(CoreError::NotFound));
+        assert_eq!(ensure_deletable(&deleted), Err(CoreError::NotFound));
+
+        for mutate in [
+            |view: &mut CipherView| view.r#type = bitwarden_vault::CipherType::Card,
+            |view: &mut CipherView| view.partial = true,
+            |view: &mut CipherView| view.login = None,
+        ] {
+            let mut view = view();
+            mutate(&mut view);
+            assert_eq!(ensure_editable(&view), Err(CoreError::NotEditable));
+            assert_eq!(ensure_deletable(&view), Err(CoreError::NotEditable));
+        }
+
+        let mut read_only = view();
+        read_only.edit = false;
+        assert_eq!(ensure_editable(&read_only), Err(CoreError::NotEditable));
+        assert_eq!(ensure_deletable(&read_only), Err(CoreError::NotEditable));
+
+        let mut protected = view();
+        protected.reprompt = bitwarden_vault::CipherRepromptType::Password;
+        assert_eq!(ensure_editable(&protected), Err(CoreError::NotEditable));
+        assert_eq!(ensure_deletable(&protected), Ok(()));
+
+        let mut delete_permission = view();
+        delete_permission.edit = false;
+        delete_permission.permissions = Some(
+            serde_json::from_value(serde_json::json!({
+                "delete": true,
+                "restore": false
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            ensure_editable(&delete_permission),
+            Err(CoreError::NotEditable)
+        );
+        assert_eq!(ensure_deletable(&delete_permission), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn sync_snapshot_and_writes_wait_for_the_operation_lock() {
+        let vault = Vault::connect(None).unwrap();
+        let guard = vault.hold_operations().await;
+        let draft = LoginDraft::default();
+        let short = Duration::from_millis(50);
+
+        assert!(timeout(short, vault.sync(false)).await.is_err());
+        assert!(timeout(short, vault.snapshot()).await.is_err());
+        assert!(timeout(short, vault.create_login(&draft)).await.is_err());
+        assert!(
+            timeout(short, vault.edit_login("id", "revision", &draft))
+                .await
+                .is_err()
+        );
+        assert!(timeout(short, vault.delete_login("id")).await.is_err());
+
+        // Reading a detail only to start an edit does not need the write lock.
+        assert!(timeout(short, vault.editor("id")).await.is_ok());
+        drop(guard);
+    }
+
+    #[tokio::test]
+    async fn a_write_with_bad_input_is_refused_before_any_request() {
+        let vault = Vault::restore(&saved_session(), PASSWORD).await.unwrap();
+
+        let draft = LoginDraft {
+            name: "New login".to_string(),
+            folder_id: Some("not-a-folder".to_string()),
+            ..LoginDraft::default()
+        };
+        assert_eq!(
+            vault.create_login(&draft).await.err(),
+            Some(CoreError::InvalidInput("item folder"))
+        );
+
+        let draft = LoginDraft {
+            name: "   ".to_string(),
+            ..LoginDraft::default()
+        };
+        assert_eq!(
+            vault.create_login(&draft).await.err(),
+            Some(CoreError::InvalidInput("item name"))
+        );
+
+        assert_eq!(
+            vault.delete_login("not-a-uuid").await.err(),
+            Some(CoreError::NotFound)
+        );
+        assert_eq!(
+            vault
+                .delete_login("99999999-9999-9999-9999-999999999999")
+                .await,
+            Ok(())
+        );
+        assert_eq!(
+            vault.editor("not-a-uuid").await.err(),
             Some(CoreError::NotFound)
         );
     }
@@ -784,6 +1402,7 @@ mod tests {
                 master_key_wrapped_user_key: master_key.encrypt_user_key(&user_key).unwrap(),
                 contained_key_id: None,
             },
+            user_id_confirmed: true,
         }
     }
 
@@ -791,6 +1410,7 @@ mod tests {
     async fn a_saved_session_unlocks_with_the_master_password() {
         let vault = Vault::restore(&saved_session(), PASSWORD).await.unwrap();
         assert!(vault.is_unlocked());
+        assert!(vault.client.0.flags().get().await.strict_cipher_decryption);
     }
 
     #[tokio::test]
@@ -933,5 +1553,30 @@ mod tests {
         assert_eq!(read.email, saved.email);
         assert_eq!(read.tokens.access_token, saved.tokens.access_token);
         assert_eq!(read.unlock.salt, saved.unlock.salt);
+        assert!(read.user_id_confirmed);
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_user_id_is_written_back_to_an_old_saved_session() {
+        let mut saved = saved_session();
+        let vault = Vault::restore(&saved, PASSWORD).await.unwrap();
+        let confirmed = saved.user_id;
+        saved.user_id = UserId::new_v4();
+        saved.user_id_confirmed = false;
+
+        assert!(vault.confirm_saved_user_id(&mut saved));
+        assert!(saved.user_id_confirmed);
+        assert_eq!(saved.user_id, confirmed);
+        assert!(!vault.confirm_saved_user_id(&mut saved));
+    }
+
+    #[test]
+    fn a_saved_session_from_before_writes_gets_a_profile_check() {
+        let saved = saved_session();
+        let mut value = serde_json::to_value(&saved).unwrap();
+        value.as_object_mut().unwrap().remove("user_id_confirmed");
+        let read: SavedSession = serde_json::from_value(value).unwrap();
+        assert!(!read.user_id_confirmed);
+        assert_eq!(read.user_id, saved.user_id);
     }
 }

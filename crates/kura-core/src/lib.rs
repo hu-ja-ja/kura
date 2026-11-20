@@ -7,6 +7,7 @@ mod model;
 mod search;
 mod server;
 mod vault;
+mod write;
 
 pub use error::CoreError;
 pub use model::{
@@ -16,3 +17,6 @@ pub use model::{
 pub use search::{VaultFilter, filter_indices};
 pub use server::{client_settings, server_url_from_saved, sign_in_base, sign_in_display};
 pub use vault::{LoginOutcome, SavedSession, TwoFactorChallenge, TwoFactorMethod, Vault};
+pub use write::{
+    LoginDraft, LoginEditor, LoginFieldDraft, LoginFieldKind, LoginUriDraft, UriMatch,
+};

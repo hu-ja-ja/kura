@@ -7,6 +7,7 @@ shellcheck = "0.11.0"
 jactionlint = "2.6.0"
 communique = { version = "1.8.0", workflow = "release.yml@refs/heads/main" }
 "aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
+"cargo:cargo-mutants" = "27.1.0"
 
 [tools."http:inno-setup"]
 version = "7.1.0"
@@ -45,6 +46,14 @@ run = "cargo audit"
 [tasks."test:packaging"]
 description = "Test the release notes extractor"
 run = "node --test packaging/changelog.test.ts"
+
+[tasks."test:live"]
+description = "Run the release-only Vaultwarden write tests"
+run = "cargo test -p kura-core --lib live_ -- --ignored --test-threads=1"
+
+[tasks."test:mutants"]
+description = "Mutation-test the vault write paths"
+run = 'cargo mutants -p kura-core --file crates/kura-core/src/write.rs --file crates/kura-core/src/vault.rs -F "write\.rs|Vault::(editor|create_login|edit_login|delete_login|remove_cipher|ensure_folder|install_user_id|profile_user_id)|ensure_(editable|deletable)|api_status|is_stale_revision|classify_delete_failure|map_(create|edit|delete)_error"'
 
 [tasks.release]
 description = "Create a draft release"
