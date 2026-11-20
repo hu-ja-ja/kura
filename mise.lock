@@ -267,6 +267,17 @@ url = "https://nodejs.org/dist/v26.13.1/node-v26.13.1-darwin-arm64.tar.gz"
 checksum = "sha256:e2edda75bfb089654705cf65a13b58933bfd5f57148e8ebda916f58a2474f1f7"
 url = "https://nodejs.org/dist/v26.13.1/node-v26.13.1-win-x64.zip"
 
+[[tools.podman]]
+version = "6.2.0"
+backend = "github:podman-container-tools/podman"
+specifiers = ["6.2.0"]
+
+[tools.podman."platforms.windows-x64"]
+checksum = "sha256:c085a4860cadf8957aaee0b4693ea98117a908ce960aeb2a74d1570eba76aa88"
+checksum_source = "mise-versions"
+url = "https://github.com/podman-container-tools/podman/releases/download/v6.2.0/podman-remote-release-windows_amd64.zip"
+url_api = "https://api.github.com/repos/podman-container-tools/podman/releases/assets/732770389"
+
 [[tools.rust]]
 version = "1.97.1-x86_64-pc-windows-gnu"
 backend = "core:rust"

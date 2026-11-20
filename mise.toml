@@ -49,6 +49,7 @@ run = "node --test packaging/changelog.test.ts"
 
 [tasks."test:live"]
 description = "Run the release-only Vaultwarden write tests"
+tools = { podman = { version = "6.2.0", os = ["windows"] } }
 run = "cargo test -p kura-core --lib live_ -- --ignored --test-threads=1"
 
 [tasks."test:mutants"]
