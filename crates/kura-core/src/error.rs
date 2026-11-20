@@ -24,6 +24,12 @@ pub enum CoreError {
     InvalidResponse,
     /// The item is no longer in the vault.
     NotFound,
+    /// Another client changed the item after the editor opened.
+    Conflict,
+    /// The item cannot be changed: not a login, partial, deleted, or no edit permission.
+    NotEditable,
+    /// A typed value cannot be saved. Carries a static, non-secret field label.
+    InvalidInput(&'static str),
     /// The item has no TOTP key.
     NoTotp,
     /// The item has no password field.
@@ -54,6 +60,9 @@ impl CoreError {
             Self::Timeout => "timeout",
             Self::InvalidResponse => "invalid_response",
             Self::NotFound => "not_found",
+            Self::Conflict => "conflict",
+            Self::NotEditable => "not_editable",
+            Self::InvalidInput(_) => "invalid_input",
             Self::NoTotp => "no_totp",
             Self::NoPassword => "no_password",
             Self::Server(_) => "server",
@@ -67,7 +76,7 @@ impl CoreError {
     /// The static step label of an [`CoreError::Internal`], for the log.
     pub fn context(&self) -> Option<&'static str> {
         match self {
-            Self::Internal(context) => Some(context),
+            Self::Internal(context) | Self::InvalidInput(context) => Some(context),
             _ => None,
         }
     }
@@ -88,6 +97,9 @@ mod tests {
             CoreError::Timeout,
             CoreError::InvalidResponse,
             CoreError::NotFound,
+            CoreError::Conflict,
+            CoreError::NotEditable,
+            CoreError::InvalidInput("a static field"),
             CoreError::NoTotp,
             CoreError::NoPassword,
             CoreError::Server("server text".to_string()),
@@ -130,5 +142,13 @@ mod tests {
 
         assert_eq!(error.code(), "internal");
         assert_eq!(error.context(), Some("read the saved tokens"));
+    }
+
+    #[test]
+    fn an_input_label_is_kept_for_the_log() {
+        let error = CoreError::InvalidInput("the item name is empty");
+
+        assert_eq!(error.code(), "invalid_input");
+        assert_eq!(error.context(), Some("the item name is empty"));
     }
 }

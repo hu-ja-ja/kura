@@ -35,7 +35,14 @@ impl Root {
                     .find(|folder| &folder.id == id)
                     .map(|folder| folder.name.clone())
             });
-            (detail.name.clone(), detail.kind, detail.favorite, folder)
+            (
+                detail.name.clone(),
+                detail.kind,
+                detail.favorite,
+                folder,
+                detail.can_edit,
+                detail.can_delete,
+            )
         });
         let totp_remaining = self
             .detail
@@ -70,7 +77,7 @@ impl Root {
             .gap_4()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
 
-        let Some((name, kind, favorite, folder)) = data else {
+        let Some((name, kind, favorite, folder, can_edit, can_delete)) = data else {
             let (title, hint) = if loading {
                 (t!("detail.loading"), t!("detail.loading_hint"))
             } else {
@@ -107,6 +114,39 @@ impl Root {
         };
 
         let close = close_button(cx);
+        let item_id = self.detail.selected_id.clone().unwrap_or_default();
+        let header_actions = h_flex()
+            .items_center()
+            .gap_1()
+            .when(can_edit, |this| {
+                let edit_id = item_id.clone();
+                this.child(
+                    Button::new("detail-edit")
+                        .ghost()
+                        .compact()
+                        .icon(AssetIcon::Pencil)
+                        .label(t!("detail.edit"))
+                        .accessibility_label(t!("detail.edit"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.request_editor(edit_id.clone(), window, cx);
+                        })),
+                )
+            })
+            .when(can_delete, |this| {
+                let delete_id = item_id.clone();
+                this.child(
+                    Button::new("detail-delete")
+                        .ghost()
+                        .compact()
+                        .icon(AssetIcon::Trash)
+                        .label(t!("detail.delete"))
+                        .accessibility_label(t!("detail.delete"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_delete_confirm(delete_id.clone(), window, cx);
+                        })),
+                )
+            })
+            .child(close);
 
         let header = h_flex()
             .items_start()
@@ -147,7 +187,7 @@ impl Root {
                             .child(meta),
                     ),
             )
-            .child(close);
+            .child(header_actions);
 
         let mut card = card.aria_label(name).h(card_height).child(header);
 
