@@ -1,4 +1,6 @@
 /target
+/mutants.out*
+/.playwright-mcp/
 /dist
 .env
 *.pdb

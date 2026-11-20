@@ -321,6 +321,8 @@ mod tests {
             id: "item-1".into(),
             name: "GitHub".into(),
             kind: ItemKind::Login,
+            can_edit: true,
+            can_delete: true,
             favorite: false,
             folder_id: None,
             username: Some("octocat".into()),

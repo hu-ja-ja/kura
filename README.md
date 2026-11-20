@@ -13,6 +13,7 @@ Native Windows client for Bitwarden.
 
 - **Sign-in:** Master password; TOTP or email two-step verification; master-password unlock from a saved login.
 - **Vault:** Search, folders, favorites, and item details.
+- **Writes:** Add, edit, and move login items to the trash.
 - **Actions:** Copy credentials and TOTP codes; open URIs.
 - **Desktop:** System tray, auto-lock, autostart, and single-instance support.
 - **Security:** Protected saved login, clipboard auto-clear after 30 seconds, and screen capture protection.
@@ -53,9 +54,9 @@ Choose No to keep the data for a later reinstall.
 
 ## Roadmap
 
-- [ ] Add vault items.
-- [ ] Edit vault item fields.
-- [ ] Delete items and move them to Trash.
+- [x] Add vault items.
+- [x] Edit vault item fields.
+- [x] Delete items and move them to Trash.
 - [ ] Biometric unlock bridge.
 - [ ] Attachments.
 - [ ] Import vault data.
@@ -81,8 +82,10 @@ mise run package  # Inno Setup installer
 
 `mise run package` needs Inno Setup 7.1.0; `mise run install-inno` installs it silently. It
 writes `dist/Kura-<version>-setup.exe` with its SHA-256 file. Run `cargo test` for the
-workspace tests, `mise run audit` to audit dependencies, and `mise run licenses` to
-regenerate the bundled license list after changing dependencies.
+workspace tests, `mise run test:live` for the local Vaultwarden write checks,
+`mise run test:mutants` for the write-path mutation pass, `mise run audit` to audit
+dependencies, and `mise run licenses` to regenerate the bundled license list after
+changing dependencies.
 
 A development build uses the public test key and refuses to install updates.
 

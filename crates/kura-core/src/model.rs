@@ -6,7 +6,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitwarden_vault::{
-    CipherListView, CipherListViewType, CipherType, CipherView, FieldType, generate_totp,
+    CipherListView, CipherListViewType, CipherRepromptType, CipherType, CipherView, FieldType,
+    generate_totp,
 };
 use url::Url;
 use zeroize::Zeroizing;
@@ -174,6 +175,10 @@ pub struct VaultItemDetail {
     pub id: String,
     pub name: String,
     pub kind: ItemKind,
+    /// A login the user may edit. Reprompt-protected items stay read-only.
+    pub can_edit: bool,
+    /// A login the user may move to the trash.
+    pub can_delete: bool,
     pub favorite: bool,
     pub folder_id: Option<String>,
     pub username: Option<String>,
@@ -190,12 +195,22 @@ pub struct VaultItemDetail {
 
 impl From<CipherView> for VaultItemDetail {
     fn from(mut view: CipherView) -> Self {
+        let is_login = view.r#type == CipherType::Login
+            && view.login.is_some()
+            && !view.partial
+            && view.deleted_date.is_none();
+        let can_edit = is_login && view.edit && view.reprompt == CipherRepromptType::None;
+        let can_delete = is_login
+            && view
+                .permissions
+                .as_ref()
+                .map_or(view.edit, |permissions| permissions.delete);
         // Move the login fields out of the view. Cloning them would leave a
         // second, unzeroized copy of the password in the freed heap.
         let (username, password, uris, totp) = match view.login.take() {
             Some(login) => (
                 non_empty(login.username),
-                non_empty(login.password).map(Zeroizing::new),
+                raw_non_empty(login.password).map(Zeroizing::new),
                 login
                     .uris
                     .unwrap_or_default()
@@ -293,6 +308,8 @@ impl From<CipherView> for VaultItemDetail {
             id: view.id.map(|id| id.to_string()).unwrap_or_default(),
             name: view.name,
             kind: ItemKind::from(view.r#type),
+            can_edit,
+            can_delete,
             favorite: view.favorite,
             folder_id: view.folder_id.map(|id| id.to_string()),
             username,
@@ -345,6 +362,10 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|text| !text.trim().is_empty())
 }
 
+fn raw_non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|text| !text.is_empty())
+}
+
 fn join(values: impl IntoIterator<Item = Option<String>>, separator: &str) -> Option<String> {
     let joined = values
         .into_iter()
@@ -359,6 +380,61 @@ fn join(values: impl IntoIterator<Item = Option<String>>, separator: &str) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn login_view() -> CipherView {
+        serde_json::from_value(serde_json::json!({
+            "id": "22222222-2222-2222-2222-222222222222",
+            "organizationId": null,
+            "folderId": null,
+            "collectionIds": [],
+            "key": null,
+            "name": "GitHub",
+            "notes": null,
+            "type": 1,
+            "login": { "username": "octocat", "password": "   " },
+            "favorite": false,
+            "reprompt": 0,
+            "organizationUseTotp": false,
+            "edit": true,
+            "viewPassword": true,
+            "creationDate": "2026-01-01T00:00:00Z",
+            "revisionDate": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn write_capabilities_follow_delete_permission_and_reprompt() {
+        let view = login_view();
+        let detail = VaultItemDetail::from(view.clone());
+        assert!(detail.can_edit);
+        assert!(detail.can_delete);
+
+        let mut protected = view.clone();
+        protected.reprompt = CipherRepromptType::Password;
+        let detail = VaultItemDetail::from(protected);
+        assert!(!detail.can_edit);
+        assert!(detail.can_delete);
+
+        let mut no_delete = view;
+        no_delete.edit = false;
+        no_delete.permissions = Some(
+            serde_json::from_value(serde_json::json!({
+                "delete": false,
+                "restore": false
+            }))
+            .unwrap(),
+        );
+        let detail = VaultItemDetail::from(no_delete);
+        assert!(!detail.can_edit);
+        assert!(!detail.can_delete);
+    }
+
+    #[test]
+    fn a_whitespace_only_password_is_not_treated_as_absent() {
+        let detail = VaultItemDetail::from(login_view());
+        assert_eq!(detail.password.as_deref().map(String::as_str), Some("   "));
+    }
 
     #[test]
     fn opens_only_plain_web_urls() {
