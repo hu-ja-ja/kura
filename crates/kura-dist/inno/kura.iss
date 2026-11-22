@@ -8,7 +8,7 @@
 #define AppPublisher "hu-ja-ja"
 #define AppId "{{52762645-69AD-46B4-9CEE-4BA2E9D3A6E9}"
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.1.1"
 #endif
 #ifndef StageDir
   #define StageDir "..\..\..\dist\stage"

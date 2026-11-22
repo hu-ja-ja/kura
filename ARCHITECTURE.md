@@ -27,7 +27,7 @@ check it against `Cargo.toml` and `Cargo.lock` before trusting the details.
 | Item | Value |
 | --- | --- |
 | Code state | commit [`ffe7203`](https://github.com/hu-ja-ja/kura/commit/ffe7203), 2026-11-08 |
-| Workspace version | `0.1.0` |
+| Workspace version | `0.1.1` |
 | UI | [GPUI Kit](https://crates.io/crates/gpui-kit) `0.9` |
 | Bitwarden SDK | [`sdk-internal` at `365fb98`](https://github.com/bitwarden/sdk-internal/tree/365fb983883370bfd2f6c3f3f51759634c7bf7b0), pinned in `crates/kura-core/Cargo.toml` |
 | Platform | Windows 10 22H2 and Windows 11, x64 only |

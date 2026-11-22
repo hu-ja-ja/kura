@@ -5598,7 +5598,7 @@ Used by:
  - find-msvc-tools 0.1.15
  - flate2 1.1.10
  - fnv 1.0.7
- - form_urlencoded 1.2.2
+ - form_urlencoded 1.2.3
  - futf 0.1.5
  - futures-lite 2.6.1
  - gimli 0.34.0
@@ -5687,7 +5687,7 @@ Used by:
  - unicode-segmentation 1.13.3
  - unicode-vo 0.1.0
  - unicode-width 0.2.3
- - url 2.5.8
+ - url 2.5.9
  - uuid 1.29.0
  - version_check 0.9.5
  - waker-fn 1.2.0
@@ -10239,10 +10239,10 @@ Used by:
  - bitwarden-uuid-macro 4.0.0
  - bitwarden-uuid 4.0.0
  - bitwarden-vault 4.0.0
- - kura-app 0.1.0
- - kura-core 0.1.0
- - kura-dist 0.1.0
- - kura-platform 0.1.0
+ - kura-app 0.1.1
+ - kura-core 0.1.1
+ - kura-dist 0.1.1
+ - kura-platform 0.1.1
 
 GNU GENERAL PUBLIC LICENSE
 Version 3, 29 June 2007
