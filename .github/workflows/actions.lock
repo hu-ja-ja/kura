@@ -5,8 +5,8 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/ci.yml':
         - 'actions/checkout@v7.0.1'
-        - 'jdx/mise-action@v5.2.10'
-        - 'jdx/mr-boxington-action@v1.7.3'
+        - 'jdx/mise-action@v5.3.0'
+        - 'jdx/mr-boxington-action@v1.7.4'
     '.github/workflows/release.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/configure-pages@v6.0.0'
@@ -15,7 +15,7 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'actions/upload-pages-artifact@v5.0.0'
         - 'infisical/secrets-action@v1.0.18'
-        - 'jdx/mise-action@v5.2.10'
+        - 'jdx/mise-action@v5.3.0'
 dependencies:
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
@@ -59,13 +59,13 @@ dependencies:
         commit: 'sha1-d2e351f16c6ca20d17c85e6c992e04bdeb64e87d'
         owner_id: 107880645
         repo_id: 795503506
-    'jdx/mise-action@v5.2.10':
-        ref: 'v5.2.10'
-        commit: 'sha1-90f833d396d0cc3674b631d2d225e306476c303a'
+    'jdx/mise-action@v5.3.0':
+        ref: 'v5.3.0'
+        commit: 'sha1-924e7c586e33d7d4bae9c14e26c5d22e2beb6e78'
         owner_id: 216188
         repo_id: 738284564
-    'jdx/mr-boxington-action@v1.7.3':
-        ref: 'v1.7.3'
-        commit: 'sha1-88acf2bb50552c7c508cbac13e5f8c576b95b1de'
+    'jdx/mr-boxington-action@v1.7.4':
+        ref: 'v1.7.4'
+        commit: 'sha1-b3ef673bd77c5426927fe8836c6185cdae04c2dd'
         owner_id: 216188
         repo_id: 1345301886
