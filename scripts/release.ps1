@@ -20,6 +20,13 @@ Push-Location $root
 try {
     Invoke-Native jj @('git', 'fetch')
 
+    # The release commits onto @- and moves main there, so refuse to run from a
+    # feature branch: the tag would land outside main.
+    $parentBookmarks = (Invoke-Native jj @('log', '-r', '@-', '--no-graph', '-T', 'bookmarks')).Trim()
+    if ($parentBookmarks -notmatch '(^|\s)main(\s|$)') {
+        throw "the working-copy parent is not on main (bookmarks: '$parentBookmarks'); check out main before releasing"
+    }
+
     $empty = (Invoke-Native jj @('log', '-r', '@', '--no-graph', '-T', 'empty')).Trim()
     if ($empty -ne 'true') {
         throw 'the working copy is not clean; commit or discard your changes first'
