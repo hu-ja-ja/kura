@@ -92,7 +92,7 @@ jobs:
           toolchain: 1.97.1
           cache: false
           build-warnings: ""
-      - uses: jdx/mr-boxington-action@v1.7.3
+      - uses: jdx/mr-boxington-action@v1.7.4
         with:
           version: "1.30.0"
       - name: Run the live test
