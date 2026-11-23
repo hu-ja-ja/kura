@@ -70,6 +70,36 @@ jobs:
           ED25519_PUBLIC_KEY: ci-placeholder
         run: mise run package
 
+  live:
+    name: Live Vaultwarden
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    services:
+      vaultwarden:
+        image: vaultwarden/server:1.37.5@sha256:4fe17f415f90087377d37c755e0ea3cf189dcc6794e49cdd2a9adbb4937d9e1f
+        env:
+          SIGNUPS_ALLOWED: "true"
+          I_REALLY_WANT_VOLATILE_STORAGE: "true"
+          WEB_VAULT_ENABLED: "false"
+        ports:
+          - 18080:80
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
+        with:
+          toolchain: 1.97.1
+          cache: false
+          build-warnings: ""
+      - uses: jdx/mr-boxington-action@v1.7.4
+        with:
+          version: "1.30.0"
+      - name: Run the live test
+        env:
+          KURA_LIVE_URL: http://127.0.0.1:18080
+        run: mbx test -p kura-core --lib live_ --locked -- --ignored --test-threads=1
+
   actions:
     name: Lint the workflows
     runs-on: ubuntu-26.04
@@ -84,7 +114,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh extension install github/gh-actions-lock --force --pin v0.4.1
+          gh extension install github/gh-actions-lock --force --pin v0.5.1
           gh actions-lock --verify
       - uses: jdx/mise-action@v5.3.0
         with:

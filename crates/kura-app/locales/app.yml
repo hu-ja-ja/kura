@@ -358,6 +358,9 @@ two_factor:
     ja: "確認"
 
 vault:
+  add:
+    en: "Add item"
+    ja: "項目を追加"
   search:
     en: "Search name, username or URL"
     ja: "名前・ユーザー名・URLで検索"
@@ -399,6 +402,12 @@ vault:
     ja: "%{count} 件を読み取れませんでした。"
 
 detail:
+  edit:
+    en: "Edit"
+    ja: "編集"
+  delete:
+    en: "Delete"
+    ja: "削除"
   empty:
     en: "Select an item."
     ja: "項目を選択してください。"
@@ -499,6 +508,122 @@ detail:
     en: "Attachment"
     ja: "添付ファイル"
 
+editor:
+  add_title:
+    en: "Add login"
+    ja: "ログインを追加"
+  edit_title:
+    en: "Edit login"
+    ja: "ログインを編集"
+  loading:
+    en: "Preparing the edit"
+    ja: "編集内容を準備中"
+  loading_hint:
+    en: "Decrypting the item."
+    ja: "項目を復号しています。"
+  name:
+    en: "Name"
+    ja: "名前"
+  username:
+    en: "Username"
+    ja: "ユーザー名"
+  password:
+    en: "Password"
+    ja: "パスワード"
+  totp:
+    en: "TOTP seed"
+    ja: "TOTPのシード"
+  uris:
+    en: "URLs"
+    ja: "URL"
+  uri:
+    en: "URL"
+    ja: "URL"
+  add_uri:
+    en: "Add URL"
+    ja: "URLを追加"
+  notes:
+    en: "Notes"
+    ja: "メモ"
+  custom_fields:
+    en: "Custom fields"
+    ja: "カスタムフィールド"
+  add_field:
+    en: "Add field"
+    ja: "フィールドを追加"
+  linked_hint:
+    en: "Linked fields are preserved unchanged."
+    ja: "Linkedフィールドは変更せずに保持します。"
+  field_name:
+    en: "Field name"
+    ja: "フィールド名"
+  field_value:
+    en: "Field value"
+    ja: "フィールドの値"
+  field_text:
+    en: "Text"
+    ja: "テキスト"
+  field_hidden:
+    en: "Hidden"
+    ja: "非表示"
+  field_boolean:
+    en: "Boolean"
+    ja: "真偽値"
+  boolean_value:
+    en: "%{name}: value"
+    ja: "%{name}: 値"
+  folder:
+    en: "Folder"
+    ja: "フォルダ"
+  no_folder:
+    en: "No folder"
+    ja: "フォルダなし"
+  favorite:
+    en: "Favorite"
+    ja: "お気に入り"
+  match_default:
+    en: "Default match"
+    ja: "既定の照合"
+  match_domain:
+    en: "Base domain"
+    ja: "ベースドメイン"
+  match_host:
+    en: "Host"
+    ja: "ホスト"
+  match_starts_with:
+    en: "Starts with"
+    ja: "前方一致"
+  match_exact:
+    en: "Exact"
+    ja: "完全一致"
+  match_regex:
+    en: "Regular expression"
+    ja: "正規表現"
+  match_never:
+    en: "Never"
+    ja: "照合しない"
+  remove:
+    en: "Remove"
+    ja: "削除"
+  save:
+    en: "Save"
+    ja: "保存"
+  saved:
+    en: "The item was saved."
+    ja: "項目を保存しました。"
+  delete_title:
+    en: "Move this item to the trash?"
+    ja: "この項目をゴミ箱へ移動しますか?"
+  delete_body:
+    en: "The item can be restored from the Bitwarden web vault."
+    ja: "項目はBitwardenのWeb保管庫から復元できます。"
+  delete_confirm:
+    en: "Move to trash"
+    ja: "ゴミ箱へ移動"
+  deleted:
+    en: "The item was moved to the trash."
+    ja: "項目をゴミ箱へ移動しました。"
+
 item_kind:
   login:
     en: "Login"
@@ -550,6 +675,15 @@ error:
   not_found:
     en: "That item is no longer in the vault."
     ja: "その項目は保管庫にありません。"
+  conflict:
+    en: "Another client changed this item. Close the editor and open it again."
+    ja: "別のクライアントがこの項目を変更しました。編集画面を閉じて開き直してください。"
+  not_editable:
+    en: "This item cannot be changed."
+    ja: "この項目は変更できません。"
+  invalid_input:
+    en: "Check the name and folder, then try again."
+    ja: "名前とフォルダを確認して、もう一度試してください。"
   no_totp:
     en: "This item has no one-time code."
     ja: "この項目にワンタイムコードはありません。"

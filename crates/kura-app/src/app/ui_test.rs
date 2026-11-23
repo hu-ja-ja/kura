@@ -13,13 +13,14 @@ use gpui_kit::{
     WindowOptions, px, size,
 };
 use kura_core::{
-    CoreError, ItemKind, TotpCode, TwoFactorChallenge, TwoFactorMethod, VaultItem, VaultItemDetail,
+    CoreError, ItemKind, LoginDraft, LoginEditor, LoginFieldDraft, LoginFieldKind, LoginUriDraft,
+    TotpCode, TwoFactorChallenge, TwoFactorMethod, UriMatch, VaultItem, VaultItemDetail,
     VaultSnapshot,
 };
 use rust_i18n::t;
 use zeroize::Zeroizing;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, Command};
 use crate::clipboard::Guard as Clipboard;
 use crate::settings::Settings;
 use crate::update::UpdateService;
@@ -40,6 +41,15 @@ fn open_saved(
     unlocked: bool,
     saved_server: Option<String>,
 ) -> (AnyWindowHandle, Entity<Root>) {
+    open_with_backend(cx, settings, saved_server, Backend::detached(unlocked).0)
+}
+
+fn open_with_backend(
+    cx: &mut TestAppContext,
+    settings: Settings,
+    saved_server: Option<String>,
+    backend: Backend,
+) -> (AnyWindowHandle, Entity<Root>) {
     cx.update(gpui_kit::init);
     cx.update(|cx| {
         gpui_kit::open_window(
@@ -58,7 +68,7 @@ fn open_saved(
                     let mut root = Root::new(
                         window,
                         cx,
-                        Backend::detached(unlocked).0,
+                        backend,
                         settings,
                         clipboard,
                         kura_platform::Platform::detached(),
@@ -74,6 +84,24 @@ fn open_saved(
         )
         .expect("open the test window")
     })
+}
+
+fn open_recording(
+    cx: &mut TestAppContext,
+    settings: Settings,
+    unlocked: bool,
+) -> (
+    AnyWindowHandle,
+    Entity<Root>,
+    tokio::sync::mpsc::UnboundedReceiver<Command>,
+) {
+    let (backend, mut commands, events) = Backend::recording(unlocked);
+    std::mem::forget(events);
+    let (window, root) = open_with_backend(cx, settings, None, backend);
+    if unlocked {
+        assert!(matches!(commands.try_recv(), Ok(Command::Snapshot)));
+    }
+    (window, root, commands)
 }
 
 fn settings() -> Settings {
@@ -127,6 +155,8 @@ fn detail(id: &str, totp: Option<TotpCode>) -> VaultItemDetail {
         id: id.to_string(),
         name: format!("item-{id}"),
         kind: ItemKind::Login,
+        can_edit: true,
+        can_delete: true,
         favorite: false,
         folder_id: None,
         username: Some("ada".to_string()),
@@ -144,6 +174,30 @@ fn detail(id: &str, totp: Option<TotpCode>) -> VaultItemDetail {
 
 fn row_of(root: &Entity<Root>, cx: &gpui_kit::App, id: &str) -> Option<usize> {
     root.read(cx).list.read(cx).delegate().row_of(id)
+}
+
+fn editor_data(id: &str, revision: &str) -> LoginEditor {
+    LoginEditor {
+        id: id.to_string(),
+        revision: revision.to_string(),
+        draft: LoginDraft {
+            name: "GitHub".to_string(),
+            username: "octocat".to_string(),
+            password: Zeroizing::new("hunter2".to_string()),
+            totp: Zeroizing::new("JBSWY3DPEHPK3PXP".to_string()),
+            uris: vec![LoginUriDraft {
+                uri: "https://github.com".to_string(),
+                match_type: Some(UriMatch::Host),
+            }],
+            notes: Zeroizing::new("memo".to_string()),
+            folder_id: None,
+            favorite: false,
+            fields: vec![
+                LoginFieldDraft::new(LoginFieldKind::Text),
+                LoginFieldDraft::new(LoginFieldKind::Boolean),
+            ],
+        },
+    }
 }
 
 #[gpui_kit::test]
@@ -730,4 +784,367 @@ fn a_failed_sync_offers_a_retry(cx: &mut TestAppContext) {
     .unwrap();
 
     cx.update(|cx| assert!(root.read(cx).busy));
+}
+
+#[gpui_kit::test]
+fn add_opens_the_form_and_captures_one_save_command(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root, mut commands) = open_recording(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    // Focus is deferred until the click event has finished.
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("editor-name").is_some());
+        assert_eq!(window.find("editor-name").focused(), Some(true));
+
+        // An empty name cannot send a command.
+        window.click("editor-save", cx);
+        assert!(commands.try_recv().is_err());
+
+        window.click("editor-name", cx);
+        window.input("New login", cx);
+        root.update(cx, |root, cx| {
+            root.set_editor_folder(Some("work".to_string()), cx);
+        });
+        window.render_frame(cx);
+        window.click("editor-save", cx);
+        window.click("editor-save", cx);
+    })
+    .unwrap();
+
+    let Command::Save {
+        id,
+        revision,
+        draft,
+        generation,
+    } = commands.try_recv().expect("one save command")
+    else {
+        panic!("expected a save command");
+    };
+    assert!(id.is_none());
+    assert!(revision.is_none());
+    assert_eq!(draft.name, "New login");
+    assert_eq!(draft.folder_id.as_deref(), Some("work"));
+    assert!(commands.try_recv().is_err(), "a second click is ignored");
+
+    cx.update_window(window, |_, window, cx| {
+        let before = root
+            .read(cx)
+            .editor
+            .as_ref()
+            .map(|editor| editor.uris.len())
+            .unwrap();
+        window.click("editor-add-uri", cx);
+        let after = root
+            .read(cx)
+            .editor
+            .as_ref()
+            .map(|editor| editor.uris.len())
+            .unwrap();
+        assert_eq!(before, after, "the form is read-only while saving");
+    })
+    .unwrap();
+
+    send(
+        cx,
+        &root,
+        Event::WriteFailed {
+            generation,
+            err: CoreError::Conflict,
+        },
+    );
+    cx.update(|cx| {
+        let root = root.read(cx);
+        let editor = root.editor.as_ref().expect("the form stays open");
+        assert!(!editor.saving);
+        assert_eq!(editor.name.read(cx).value(), "New login");
+        assert!(editor.problem.is_some());
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("editor-name").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn edit_prefills_the_form_and_keeps_the_revision_it_opened_with(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root, mut commands) = open_recording(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+    cx.update_window(window, |_, window, cx| {
+        root.update(cx, |root, cx| {
+            root.open_item("github".to_string(), window, cx)
+        });
+    })
+    .unwrap();
+    send(cx, &root, Event::Detail(Box::new(detail("github", None))));
+
+    let Command::Detail { id } = commands.try_recv().expect("detail command") else {
+        panic!("expected a detail command");
+    };
+    assert_eq!(id, "github");
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("detail-edit", cx);
+    })
+    .unwrap();
+    let Command::Editor { id, generation } = commands.try_recv().expect("editor command") else {
+        panic!("expected an editor command");
+    };
+    assert_eq!(id, "github");
+
+    send(
+        cx,
+        &root,
+        Event::Editor {
+            editor: Box::new(editor_data("github", "revision-1")),
+            generation,
+        },
+    );
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("escape", cx);
+    })
+    .unwrap();
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(root.read(cx).detail.focus.is_focused(window));
+        window.click("detail-edit", cx);
+    })
+    .unwrap();
+    let Command::Editor { generation, .. } = commands.try_recv().expect("editor command") else {
+        panic!("expected an editor command");
+    };
+    send(
+        cx,
+        &root,
+        Event::Editor {
+            editor: Box::new(editor_data("github", "revision-1")),
+            generation,
+        },
+    );
+
+    cx.update(|cx| {
+        let editor = root.read(cx).editor.as_ref().expect("editor loaded");
+        assert!(!editor.loading);
+        assert_eq!(editor.name.read(cx).value(), "GitHub");
+        assert_eq!(editor.username.read(cx).value(), "octocat");
+        assert_eq!(editor.totp.read(cx).value(), "JBSWY3DPEHPK3PXP");
+        assert_eq!(editor.uris.len(), 1);
+        assert_eq!(editor.uris[0].match_type, Some(UriMatch::Host));
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("editor-save", cx);
+    })
+    .unwrap();
+    let Command::Save {
+        id,
+        revision,
+        draft,
+        generation: saved_generation,
+    } = commands.try_recv().expect("edit command")
+    else {
+        panic!("expected a save command");
+    };
+    assert_eq!(id.as_deref(), Some("github"));
+    assert_eq!(revision.as_deref(), Some("revision-1"));
+    assert_eq!(draft.username, "octocat");
+    assert_eq!(saved_generation, generation);
+
+    send(cx, &root, Event::Saved(generation));
+    cx.update(|cx| assert!(root.read(cx).editor.is_none()));
+}
+
+#[gpui_kit::test]
+fn edit_and_delete_are_hidden_without_write_permission(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+    cx.update_window(window, |_, window, cx| {
+        root.update(cx, |root, cx| {
+            root.open_item("github".to_string(), window, cx)
+        });
+    })
+    .unwrap();
+    let mut item = detail("github", None);
+    item.can_edit = false;
+    item.can_delete = false;
+    item.kind = ItemKind::Card;
+    send(cx, &root, Event::Detail(Box::new(item)));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("detail-edit").is_none());
+        assert!(window.try_find("detail-delete").is_none());
+    })
+    .unwrap();
+
+    let mut delete_only = detail("github", None);
+    delete_only.can_edit = false;
+    delete_only.can_delete = true;
+    send(cx, &root, Event::Detail(Box::new(delete_only)));
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("detail-edit").is_none());
+        assert!(window.try_find("detail-delete").is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn delete_confirm_can_be_cancelled_or_confirmed_once(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root, mut commands) = open_recording(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+    cx.update_window(window, |_, window, cx| {
+        root.update(cx, |root, cx| {
+            root.open_item("github".to_string(), window, cx)
+        });
+    })
+    .unwrap();
+    send(cx, &root, Event::Detail(Box::new(detail("github", None))));
+    let Command::Detail { id } = commands.try_recv().expect("detail command") else {
+        panic!("expected a detail command");
+    };
+    assert_eq!(id, "github");
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("detail-delete", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("delete-confirm").is_some());
+        window.click("delete-cancel", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("delete-confirm").is_none());
+
+        window.click("detail-delete", cx);
+        window.render_frame(cx);
+        window.click("delete-confirm", cx);
+        window.click("delete-confirm", cx);
+    })
+    .unwrap();
+
+    let Command::Delete { id, generation } = commands.try_recv().expect("delete command") else {
+        panic!("expected a delete command");
+    };
+    assert_eq!(id, "github");
+    assert!(commands.try_recv().is_err(), "a second click is ignored");
+
+    send(
+        cx,
+        &root,
+        Event::WriteFailed {
+            generation,
+            err: CoreError::Network,
+        },
+    );
+    cx.update(|cx| {
+        let confirm = root.read(cx).delete_confirm.as_ref().expect("still open");
+        assert!(!confirm.busy);
+        assert!(confirm.problem.is_some());
+    });
+
+    send(cx, &root, Event::Deleted(generation));
+    cx.update(|cx| {
+        let root = root.read(cx);
+        assert!(root.delete_confirm.is_none());
+        assert!(root.detail.selected_id.is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn switching_a_custom_field_to_boolean_normalizes_its_value(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        root.update(cx, |root, cx| {
+            root.add_field_row(window, cx);
+            let field = root.editor.as_ref().unwrap().fields.first().unwrap();
+            field
+                .value
+                .update(cx, |input, cx| input.set_value("secret", window, cx));
+            root.set_field_kind(0, LoginFieldKind::Boolean, window, cx);
+        });
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let editor = root.read(cx).editor.as_ref().unwrap();
+        assert_eq!(editor.fields[0].value.read(cx).value(), "false");
+    });
+}
+
+#[gpui_kit::test]
+fn a_result_from_an_older_form_does_not_close_the_current_one(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    let generation = cx.update(|cx| {
+        root.read(cx)
+            .editor
+            .as_ref()
+            .expect("the form is open")
+            .generation
+    });
+
+    send(cx, &root, Event::Saved(generation + 1));
+    cx.update(|cx| assert!(root.read(cx).editor.is_some()));
+
+    send(cx, &root, Event::Saved(generation));
+    cx.update(|cx| assert!(root.read(cx).editor.is_none()));
+}
+
+#[gpui_kit::test]
+fn locking_closes_the_form_and_drops_its_values(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        window.render_frame(cx);
+        window.click("editor-name", cx);
+        window.input("temporary secret", cx);
+    })
+    .unwrap();
+
+    send(cx, &root, Event::Locked);
+    cx.update(|cx| {
+        let root = root.read(cx);
+        assert!(root.editor.is_none());
+        assert!(root.delete_confirm.is_none());
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("editor-name").is_none());
+        assert!(window.try_find("sign-in").is_some());
+    })
+    .unwrap();
 }
