@@ -72,6 +72,17 @@ impl Root {
                                 })),
                         )
                         .child(
+                            Button::new("generator")
+                                .ghost()
+                                .compact()
+                                .icon(AssetIcon::Dices)
+                                .label(t!("vault.generate"))
+                                .accessibility_label(t!("vault.generate"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_generator(false, window, cx)
+                                })),
+                        )
+                        .child(
                             Button::new("sync")
                                 .ghost()
                                 .compact()

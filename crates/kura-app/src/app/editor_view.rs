@@ -592,7 +592,23 @@ impl Root {
                             .id("editor-password")
                             .aria_label(t!("editor.password"))
                             .disabled(saving)
-                            .suffix(secret_toggle("editor-password-mask", saving, cx)),
+                            .suffix(
+                                h_flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("editor-password-generate")
+                                            .ghost()
+                                            .icon(AssetIcon::Dices)
+                                            .tooltip(t!("editor.generate"))
+                                            .accessibility_label(t!("editor.generate"))
+                                            .disabled(saving)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.open_generator(true, window, cx)
+                                            })),
+                                    )
+                                    .child(secret_toggle("editor-password-mask", saving, cx)),
+                            ),
                         muted,
                     ))
                     .child(field(

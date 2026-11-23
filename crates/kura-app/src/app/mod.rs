@@ -13,8 +13,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use kura_core::{
-    CoreError, LoginFieldDraft, LoginFieldKind, TwoFactorChallenge, TwoFactorMethod, UriMatch,
-    VaultFilter, VaultItemDetail, VaultSnapshot,
+    CoreError, GeneratorError, LoginFieldDraft, LoginFieldKind, TwoFactorChallenge,
+    TwoFactorMethod, UriMatch, VaultFilter, VaultItemDetail, VaultSnapshot,
 };
 use rust_i18n::t;
 use zeroize::Zeroizing;
@@ -31,6 +31,7 @@ use crate::settings::{Settings, ThemeChoice};
 pub(crate) mod demo;
 mod detail_view;
 mod editor_view;
+mod generator_view;
 mod login;
 mod settings_view;
 #[cfg(test)]
@@ -46,6 +47,7 @@ enum Page {
 pub(super) enum Problem {
     MissingInput,
     Core(CoreError),
+    Generator(GeneratorError),
 }
 const NOTICE_TIME: Duration = Duration::from_secs(2);
 const ERROR_NOTICE_TIME: Duration = Duration::from_secs(6);
@@ -124,6 +126,15 @@ struct EditorPane {
     _name_subscription: Subscription,
 }
 
+/// The generator dialog. `from_editor` decides whether the primary action
+/// fills the open password field or copies the value.
+struct GeneratorPane {
+    from_editor: bool,
+    value: Zeroizing<String>,
+    problem: Option<Problem>,
+    focus: FocusHandle,
+}
+
 /// The confirmation shown before moving an item to the trash.
 struct DeleteConfirm {
     id: String,
@@ -189,6 +200,7 @@ pub struct Root {
     detail: DetailPane,
     /// The open add/edit form and the trash confirmation.
     editor: Option<EditorPane>,
+    generator: Option<GeneratorPane>,
     delete_confirm: Option<DeleteConfirm>,
     notice: Notice,
     challenge: Option<TwoFactorChallenge>,
@@ -403,6 +415,7 @@ impl Root {
                 focus: modal_focus,
             },
             editor: None,
+            generator: None,
             delete_confirm: None,
             notice: Notice::default(),
             challenge: None,
@@ -657,7 +670,9 @@ impl Root {
             Event::PasswordCopied(result) => {
                 if self.page == Page::Vault {
                     match result {
-                        Ok(password) => self.copy_value(&password, cx),
+                        Ok(password) => {
+                            self.copy_value(&password, cx);
+                        }
                         Err(err) => {
                             let problem = Problem::Core(err);
                             self.show_notice(problem_text(Some(&problem)), true, cx);
@@ -855,6 +870,7 @@ impl Root {
         self.filter = VaultFilter::All;
         self.snapshot = Arc::new(VaultSnapshot::default());
         self.editor = None;
+        self.generator = None;
         self.delete_confirm = None;
         self.forget_detail(window.as_deref_mut(), cx);
         self.clipboard
@@ -883,10 +899,11 @@ impl Root {
     }
 
     /// Put a value on the clipboard and wipe it again after the configured
-    /// delay, unless something else replaces it by then.
-    fn copy_value(&mut self, value: &str, cx: &mut Context<Self>) {
+    /// delay, unless something else replaces it by then. Returns whether the
+    /// clipboard took the value.
+    fn copy_value(&mut self, value: &str, cx: &mut Context<Self>) -> bool {
         if value.is_empty() {
-            return;
+            return false;
         }
         let timeout = self.settings.clipboard_clear();
         let seconds = self.settings.clipboard_seconds();
@@ -903,6 +920,7 @@ impl Root {
             log::warn!("the clipboard could not be written");
             self.show_notice(t!("detail.copy_failed").to_string(), true, cx);
         }
+        copied
     }
 
     fn show_notice(&mut self, text: String, error: bool, cx: &mut Context<Self>) {
@@ -1403,6 +1421,10 @@ impl Render for Root {
             .editor
             .is_some()
             .then(|| self.render_editor(window, cx).into_any_element());
+        let generator = self
+            .generator
+            .is_some()
+            .then(|| self.render_generator(window, cx).into_any_element());
         let delete = self
             .delete_confirm
             .is_some()
@@ -1427,6 +1449,7 @@ impl Render for Root {
             .when_some(settings, |this, settings| this.child(settings))
             .when_some(forget_login, |this, forget_login| this.child(forget_login))
             .when_some(editor, |this, editor| this.child(editor))
+            .when_some(generator, |this, generator| this.child(generator))
             .when_some(delete, |this, delete| this.child(delete))
             .when_some(notice, |this, notice| {
                 this.child(
@@ -1491,6 +1514,14 @@ fn handle_keystroke(
     if keystroke.key == "l" && keystroke.modifiers.control {
         cx.stop_propagation();
         this.lock(window, cx);
+        return;
+    }
+
+    if this.generator.is_some() {
+        if keystroke.key == "escape" {
+            cx.stop_propagation();
+            this.close_generator(Some(window), cx);
+        }
         return;
     }
 
@@ -1662,6 +1693,10 @@ pub(super) fn problem_text(problem: Option<&Problem>) -> String {
             CoreError::InvalidUrl => t!("error.invalid_url").to_string(),
             CoreError::InsecureUrl => t!("error.insecure_url").to_string(),
             CoreError::Internal(_) => t!("error.internal").to_string(),
+        },
+        Some(Problem::Generator(err)) => match err {
+            GeneratorError::NoCharacterSet => t!("error.no_character_set").to_string(),
+            GeneratorError::InvalidOptions => t!("error.invalid_input").to_string(),
         },
     }
 }
