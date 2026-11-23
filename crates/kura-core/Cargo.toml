@@ -13,6 +13,7 @@ async-trait = "0.1"
 bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
 bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
 bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
+bitwarden-generators = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
 bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
 bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
 bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }

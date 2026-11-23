@@ -361,6 +361,9 @@ vault:
   add:
     en: "Add item"
     ja: "項目を追加"
+  generate:
+    en: "Generate"
+    ja: "生成"
   search:
     en: "Search name, username or URL"
     ja: "名前・ユーザー名・URLで検索"
@@ -530,6 +533,9 @@ editor:
   password:
     en: "Password"
     ja: "パスワード"
+  generate:
+    en: "Generate a password"
+    ja: "パスワードを生成"
   totp:
     en: "TOTP seed"
     ja: "TOTPのシード"
@@ -624,6 +630,77 @@ editor:
     en: "The item was moved to the trash."
     ja: "項目をゴミ箱へ移動しました。"
 
+generator:
+  title:
+    en: "Password generator"
+    ja: "パスワード生成"
+  mode_password:
+    en: "Password"
+    ja: "パスワード"
+  mode_passphrase:
+    en: "Passphrase"
+    ja: "パスフレーズ"
+  length:
+    en: "Length"
+    ja: "長さ"
+  min_numbers:
+    en: "Minimum numbers"
+    ja: "数字の最小数"
+  min_special:
+    en: "Minimum special"
+    ja: "記号の最小数"
+  uppercase:
+    en: "A-Z"
+    ja: "A-Z"
+  lowercase:
+    en: "a-z"
+    ja: "a-z"
+  numbers:
+    en: "0-9"
+    ja: "0-9"
+  symbols:
+    en: "!@#$%^&*"
+    ja: "!@#$%^&*"
+  avoid_ambiguous:
+    en: "Avoid ambiguous characters"
+    ja: "紛らわしい文字を除外"
+  ambiguous_hint:
+    en: "I, O, l, 0 and 1 are left out."
+    ja: "I、O、l、0、1 を使いません。"
+  words:
+    en: "Words"
+    ja: "単語数"
+  separator:
+    en: "Separator"
+    ja: "区切り"
+  separator_space:
+    en: "Space"
+    ja: "スペース"
+  separator_choice:
+    en: "Separate words with %{choice}"
+    ja: "単語を %{choice} で区切る"
+  capitalize:
+    en: "Capitalize"
+    ja: "先頭を大文字"
+  include_number:
+    en: "Include a number"
+    ja: "数字を1つ入れる"
+  regenerate:
+    en: "Generate another"
+    ja: "作り直す"
+  decrease:
+    en: "Decrease"
+    ja: "減らす"
+  increase:
+    en: "Increase"
+    ja: "増やす"
+  use:
+    en: "Use password"
+    ja: "パスワードに使う"
+  copy:
+    en: "Copy"
+    ja: "コピー"
+
 item_kind:
   login:
     en: "Login"
@@ -705,6 +782,9 @@ error:
   internal:
     en: "Something went wrong."
     ja: "問題が発生しました。"
+  no_character_set:
+    en: "Turn on at least one character type."
+    ja: "文字の種類を1つ以上選んでください。"
   session_not_saved:
     en: "The login could not be saved. You will need to sign in again next time."
     ja: "ログインを保存できませんでした。次回はもう一度ログインが必要です。"

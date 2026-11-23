@@ -44,7 +44,7 @@ check it against `Cargo.toml` and `Cargo.lock` before trusting the details.
 
 - Crate boundaries and the SDK wrapper.
 - The runtime model and the channels between threads.
-- The data flows through login, sync, detail, and lock.
+- The data flows through login, sync, detail, writes, the generator, and lock.
 - Persistence, security invariants, and the threat model.
 - The update path and the release tooling.
 
@@ -67,6 +67,10 @@ only crate that depends on the SDK.
 The one rule: only `kura-core` depends on `bitwarden-*`. Every other crate
 names Kura types.
 
+The generator is the one local path: the UI calls `kura_core::generate` on the
+GPUI thread because generation never reaches the network or the vault. It
+still follows the one rule.
+
 | Layer | Crates and modules | Touches the Bitwarden SDK? |
 | --- | --- | --- |
 | UI | `kura-app`: `app/`, `list.rs`, `detail.rs` | No |
@@ -87,7 +91,7 @@ Two public items in `kura-core` expose SDK value types:
 
 Apart from `SavedSession`, the UI names only Kura types: `Vault`,
 `VaultSnapshot`, `VaultItem`, `VaultItemDetail`, `LoginDraft`, `LoginEditor`,
-`LoginOutcome`, `TwoFactorChallenge`, `CoreError`.
+`LoginOutcome`, `GeneratorOptions`, `TwoFactorChallenge`, `CoreError`.
 
 ## Layer Architecture
 
@@ -286,13 +290,25 @@ an SDK error type. `CoreError::Internal` carries a static step label for the
 log and never server text or a vault value. `Rejected` and `Server` keep the
 server's own message for display.
 
+### Generator
+
+- Generation is local and uses the SDK's `bitwarden-generators`: the same
+  character sets, per-class minimums, ambiguous set, EFF word list, and
+  OS-backed RNG as the Bitwarden clients.
+- `kura-core` keeps one lazily built `Client` for the generator, separate from
+  the `Vault`. Generation is synchronous on the GPUI thread; it never enters
+  the worker and makes no network request.
+- `kura-core` only maps `GeneratorOptions` onto the SDK requests. No generated
+  value reaches the vault, the log, or `settings.json`; only the options are
+  saved. Generator errors stay a separate `GeneratorError`, not `CoreError`.
+
 ## Runtime Model
 
 ### Threads and Executors
 
 | Executor | Owns | Never does |
 | --- | --- | --- |
-| GPUI main thread | All UI entities, rendering, input, window controller | Network calls, key derivation, long file I/O |
+| GPUI main thread | All UI entities, rendering, input, window controller, local password generation | Network calls, key derivation, long file I/O |
 | tokio multi-thread runtime | Backend worker, SDK network and decryption, one background sync at a time | Touch UI state directly, render |
 | `kura-platform` thread | Win32 message loop, tray, idle timer, session and power notifications | Read the vault |
 | GPUI background executor | Update check/download, clipboard timer, TOTP countdown, window restore delays | Decrypt vault items |
@@ -460,6 +476,15 @@ background sync in step 4 does use the network.
 - Locking during a request cancels the UI wait and drops the form. A request
   that already reached the server is reconciled by the next sync.
 
+### Generator
+
+- The form's generate button and the vault header's generate button open the
+  same dialog. The form action fills the password field; the header action
+  copies the value and starts the clipboard wipe timer.
+- Option changes regenerate immediately and are saved in `settings.json`. The
+  generated value lives only in the dialog and, after "Use", in the form.
+- Locking drops the dialog and its value.
+
 ### Lock
 
 1. A manual lock, tray action, idle timer, session lock, or suspend sends
@@ -567,6 +592,9 @@ the bundled license list.
   A vault test holds the real operation write lock and checks that sync,
   snapshot, and writes wait for it. `mise run test:mutants` targets the write
   paths.
+- `generator.rs` tests cover the Bitwarden defaults, class minimums, the
+  ambiguous set, clamping, and passphrase shape. The UI tests cover the form
+  and header entry points and the lock cleanup.
 - `mise run test:live` runs ignored tests against a loopback Vaultwarden. The
   tests refuse non-loopback URLs. CI runs the same test on Linux against a
   Vaultwarden service container.
@@ -626,6 +654,8 @@ Links are relative to the repository root.
 | Detail rows | [detail.rs](crates/kura-app/src/detail.rs) |
 | UI-to-SDK bridge, commands, events, worker | [backend.rs](crates/kura-app/src/backend.rs) |
 | Vault engine, login, restore, sync, lock, writes | [vault.rs](crates/kura-core/src/vault.rs) |
+| Password and passphrase generator | [generator.rs](crates/kura-core/src/generator.rs) |
+| Generator dialog | [generator_view.rs](crates/kura-app/src/app/generator_view.rs) |
 | Login drafts, request building, write tests | [write.rs](crates/kura-core/src/write.rs) |
 | Live Vaultwarden tests | [vault/live.rs](crates/kura-core/src/vault/live.rs) |
 | SDK models to Kura models | [model.rs](crates/kura-core/src/model.rs) |

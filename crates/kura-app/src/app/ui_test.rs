@@ -13,9 +13,9 @@ use gpui_kit::{
     WindowOptions, px, size,
 };
 use kura_core::{
-    CoreError, ItemKind, LoginDraft, LoginEditor, LoginFieldDraft, LoginFieldKind, LoginUriDraft,
-    TotpCode, TwoFactorChallenge, TwoFactorMethod, UriMatch, VaultItem, VaultItemDetail,
-    VaultSnapshot,
+    CoreError, GeneratorMode, ItemKind, LoginDraft, LoginEditor, LoginFieldDraft, LoginFieldKind,
+    LoginUriDraft, TotpCode, TwoFactorChallenge, TwoFactorMethod, UriMatch, VaultItem,
+    VaultItemDetail, VaultSnapshot,
 };
 use rust_i18n::t;
 use zeroize::Zeroizing;
@@ -50,13 +50,29 @@ fn open_with_backend(
     saved_server: Option<String>,
     backend: Backend,
 ) -> (AnyWindowHandle, Entity<Root>) {
+    open_sized(
+        cx,
+        settings,
+        saved_server,
+        backend,
+        size(px(900.), px(700.)),
+    )
+}
+
+fn open_sized(
+    cx: &mut TestAppContext,
+    settings: Settings,
+    saved_server: Option<String>,
+    backend: Backend,
+    window_size: gpui_kit::Size<gpui_kit::Pixels>,
+) -> (AnyWindowHandle, Entity<Root>) {
     cx.update(gpui_kit::init);
     cx.update(|cx| {
         gpui_kit::open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: Point::default(),
-                    size: size(px(900.), px(700.)),
+                    size: window_size,
                 })),
                 ..Default::default()
             },
@@ -1144,6 +1160,209 @@ fn locking_closes_the_form_and_drops_its_values(cx: &mut TestAppContext) {
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("editor-name").is_none());
+        assert!(window.try_find("sign-in").is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_generator_fills_the_editor_password_with_the_clients_default(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        window.render_frame(cx);
+        window.click("editor-password-generate", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let generator = root.read(cx).generator.as_ref().expect("generator open");
+        assert!(generator.from_editor);
+        assert_eq!(generator.value.len(), 14);
+        assert_eq!(
+            root.read(cx).settings.generator.mode,
+            GeneratorMode::Password
+        );
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("generator-use", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let root = root.read(cx);
+        assert!(root.generator.is_none());
+        let editor = root.editor.as_ref().expect("the form stays open");
+        assert_eq!(editor.password.read(cx).value().len(), 14);
+    });
+}
+
+#[gpui_kit::test]
+fn the_generator_opens_from_the_header_and_saves_the_passphrase_mode(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("generator", cx);
+        window.render_frame(cx);
+        window.click("generator-mode-passphrase", cx);
+        window.render_frame(cx);
+        window.click("generator-words-plus", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let root = root.read(cx);
+        let generator = root.generator.as_ref().expect("generator open");
+        assert!(!generator.from_editor);
+        assert_eq!(root.settings.generator.mode, GeneratorMode::Passphrase);
+        assert_eq!(root.settings.generator.passphrase.words, 7);
+        assert_eq!(generator.value.split('-').count(), 7);
+    });
+}
+
+#[gpui_kit::test]
+fn the_generator_keeps_its_buttons_inside_a_short_window(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    // The smallest window the app allows.
+    let (window, root) = open_sized(
+        cx,
+        settings(),
+        None,
+        Backend::detached(true).0,
+        size(px(720.), px(480.)),
+    );
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("generator", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update_window(window, |_, window, _cx| {
+        let viewport = window.viewport_size().height;
+        let button = window.find("generator-copy").bounds();
+        let bottom = button.origin.y + button.size.height;
+        // The dialog keeps the overlay's 24px margin, so the pinned buttons
+        // stay clear of the window edge.
+        assert!(
+            bottom <= viewport - px(24.),
+            "the copy button ends at {bottom:?}, too close to the {viewport:?} window edge"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_long_generated_password_wraps_instead_of_being_cut(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+    root.update(cx, |root, cx| {
+        root.settings.generator.password.length = 128;
+        cx.notify();
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("generator", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update_window(window, |_, window, _cx| {
+        let value = window.find("generator-value").bounds();
+        // One line is about 40px. A truncated value is pinned to one line, so
+        // a taller box proves the whole 128-character password is shown.
+        assert!(
+            value.size.height > px(60.),
+            "the value box did not wrap: {value:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_broken_character_set_shows_the_generator_error(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+    root.update(cx, |root, cx| {
+        let password = &mut root.settings.generator.password;
+        password.uppercase = false;
+        password.lowercase = false;
+        password.numbers = false;
+        password.special = false;
+        cx.notify();
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("generator", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let generator = root.read(cx).generator.as_ref().expect("generator open");
+        assert!(generator.value.is_empty());
+        assert!(generator.problem.is_some());
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let expected = t!("error.no_character_set").to_string();
+        assert_eq!(
+            window.find("generator-problem").label(),
+            Some(expected.as_str())
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_last_character_class_stays_on_and_lock_closes_the_generator(cx: &mut TestAppContext) {
+    let _serial = crate::test_lock::serial();
+    let (window, root) = open(cx, settings(), true);
+    send(cx, &root, Event::Snapshot(Arc::new(snapshot())));
+
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("generator", cx);
+        window.render_frame(cx);
+        window.click("generator-uppercase", cx);
+        window.render_frame(cx);
+        window.click("generator-lowercase", cx);
+        window.render_frame(cx);
+        window.click("generator-numbers", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let password = &root.read(cx).settings.generator.password;
+        assert!(!password.uppercase);
+        assert!(!password.lowercase);
+        assert!(password.numbers, "the last class cannot be turned off");
+    });
+
+    send(cx, &root, Event::Locked);
+    cx.update(|cx| assert!(root.read(cx).generator.is_none()));
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("generator-copy").is_none());
         assert!(window.try_find("sign-in").is_some());
     })
     .unwrap();

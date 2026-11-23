@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui_kit::{Bounds, Pixels, Window, WindowBounds};
+use kura_core::GeneratorOptions;
 use serde::{Deserialize, Serialize};
 
 /// How the theme follows the system.
@@ -87,6 +88,9 @@ pub struct Settings {
     /// guard, not a seal: anyone who can write this file can add a server.
     pub confirmed_servers: Vec<String>,
     pub window: Option<WindowPlacement>,
+    /// Last options of the password and passphrase generator. The generated
+    /// value is never saved.
+    pub generator: GeneratorOptions,
 }
 
 impl Default for Settings {
@@ -103,6 +107,7 @@ impl Default for Settings {
             screenshot_protection: true,
             confirmed_servers: Vec::new(),
             window: None,
+            generator: GeneratorOptions::default(),
         }
     }
 }
@@ -260,6 +265,7 @@ mod tests {
                 height: 800.0,
                 maximized: true,
             }),
+            generator: GeneratorOptions::default(),
         };
         settings.save_to(&path).unwrap();
 

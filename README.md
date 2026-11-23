@@ -14,6 +14,7 @@ Native Windows client for Bitwarden.
 - **Sign-in:** Master password; TOTP or email two-step verification; master-password unlock from a saved login.
 - **Vault:** Search, folders, favorites, and item details.
 - **Writes:** Add, edit, and move login items to the trash.
+- **Generator:** Passwords and passphrases with the same options and word list as the Bitwarden clients.
 - **Actions:** Copy credentials and TOTP codes; open URIs.
 - **Desktop:** System tray, auto-lock, autostart, and single-instance support.
 - **Security:** Protected saved login, clipboard auto-clear after 30 seconds, and screen capture protection.
