@@ -19,7 +19,7 @@ screenshots = ["dep:image", "gpui-kit/test-support"]
 
 [dependencies]
 clipboard-win = { version = "5", features = ["std"] }
-gpui-kit = "0.10"
+gpui-kit = "0.11"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 kura-core = { path = "../kura-core" }
 kura-dist = { path = "../kura-dist" }
@@ -35,7 +35,7 @@ url = "2"
 zeroize = "1"
 
 [dev-dependencies]
-gpui-kit = { version = "0.10", features = ["test-support"] }
+gpui-kit = { version = "0.11", features = ["test-support"] }
 tempfile = "3"
 
 [build-dependencies]
