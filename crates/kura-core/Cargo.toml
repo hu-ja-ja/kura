@@ -10,13 +10,13 @@ workspace = true
 
 [dependencies]
 async-trait = "0.1"
-bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
-bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
-bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
-bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
-bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
-bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
-bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "c5c08aebe8830f3c0fa54348b63f895137f2b827" }
+bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "3dd0ef5c866cae13775848e3fde58720d6ad16ec" }
+bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "3dd0ef5c866cae13775848e3fde58720d6ad16ec" }
+bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "3dd0ef5c866cae13775848e3fde58720d6ad16ec" }
+bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "3dd0ef5c866cae13775848e3fde58720d6ad16ec" }
+bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "3dd0ef5c866cae13775848e3fde58720d6ad16ec" }
+bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "3dd0ef5c866cae13775848e3fde58720d6ad16ec" }
+bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "3dd0ef5c866cae13775848e3fde58720d6ad16ec" }
 # Turns on the operating system proxy for the HTTP clients the SDK builds.
 reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
 serde = { version = "1", features = ["derive"] }
